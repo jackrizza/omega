@@ -1,0 +1,33 @@
+[package]
+name = "omega"
+version = "0.1.0"
+edition = "2024"
+description = "Persistent terminal workspace for Omega model training"
+
+[features]
+default = []
+gpu = ["omega-training/gpu", "omega-benchmark/gpu"]
+cuda = ["omega-training/cuda", "omega-benchmark/cuda"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6.7", features = ["derive"] }
+omega-datasets = { path = "../omega-datasets" }
+omega-tokenizer = { path = "../omega-tokenizer" }
+omega-nn = { path = "../omega-nn" }
+omega-training = { path = "../omega-training" }
+omega-benchmark = { path = "../omega-benchmark" }
+ratatui = "=0.30.2"
+crossterm = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+toml_edit = "0.22"
+sha2 = "0.10"
+ctrlc = { version = "3.5", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,105 @@
+name: Omega Linux release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: omega-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    container: nvidia/cuda:12.5.1-devel-ubuntu22.04@sha256:732f76ff134bfa50b9a86e2fe7d07fecd3730beb98f3bcef616c6ae9d9f33f4c
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: /tmp/omega-target
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      OMEGA_BUILD_REVISION: ${{ github.sha }}
+    steps:
+      - name: Build tools
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3
+      - uses: actions/checkout@v4
+      - name: Pinned Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0 --profile minimal --component rustfmt --component clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Format, CPU tests and strict lint
+        working-directory: Code/Rust
+        run: |
+          cargo fmt --all --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Feature builds and lint
+        working-directory: Code/Rust
+        run: |
+          cargo check -p omega --locked --features gpu
+          cargo check -p omega --locked --features cuda
+          cargo clippy --workspace --all-targets --locked --features omega/gpu,omega/cuda -- -D warnings
+          cargo build -p omega --release --locked --features gpu,cuda
+      - name: Linux persistence and terminal tests
+        run: python3 Code/Rust/omega/tests/persistence.py /tmp/omega-target/release/omega
+      - name: Package
+        run: |
+          mkdir -p dist/package
+          cp /tmp/omega-target/release/omega dist/omega
+          cp dist/omega dist/package/omega
+          cp Docs/omega.md dist/package/RUNTIME.md
+          cp Docs/omega.md dist/RUNTIME.md
+          cp Code/Rust/omega/tests/clean_runtime.sh dist/clean_runtime.sh
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="$GITHUB_REF_NAME"
+          else
+            VERSION="main-${GITHUB_SHA:0:12}"
+          fi
+          tar -C dist/package -czf "dist/omega-${VERSION}-linux-x86_64.tar.gz" omega RUNTIME.md
+          cd dist
+          sha256sum omega *.tar.gz RUNTIME.md > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omega-linux-x86_64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/omega
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/RUNTIME.md
+            dist/clean_runtime.sh
+  clean-runtime:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: omega-linux-x86_64
+          path: dist
+      - name: No Rust, GPU driver, or CUDA libraries
+        run: |
+          chmod +x dist/omega
+          docker run --rm -v "$PWD/dist:/artifact:ro" ubuntu:22.04 /bin/sh /artifact/clean_runtime.sh /artifact/omega
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, clean-runtime]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: omega-linux-x86_64
+          path: dist
+      - name: Publish tagged artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --repo "$GITHUB_REPOSITORY" --title "Omega $GITHUB_REF_NAME" --notes-file dist/RUNTIME.md dist/omega dist/*.tar.gz dist/SHA256SUMS dist/RUNTIME.md

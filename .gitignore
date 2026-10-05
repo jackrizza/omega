@@ -1,0 +1,44 @@
+# Build outputs and local tool environments.
+**/target/
+/dist/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# This checkout's Cargo target directory is specific to its host.
+/Code/Rust/.cargo/config.toml
+
+# Credentials and private remote-host settings (including backup copies).
+.env*
+!.env.example
+*.pem
+*.key
+
+# Keep the application workspace lockfile for reproducible --locked builds.
+!/Code/Rust/Cargo.lock
+
+# Corpora, downloaded tokenizers, caches and model projects are local data.
+# Only explicitly reviewed tiny fixtures and the example recipe are versioned.
+/datasets/*
+!/datasets/test.json
+!/datasets/README.md
+!/datasets/examples/
+/datasets/examples/*
+!/datasets/examples/greetings/
+!/datasets/examples/omega/
+/datasets/examples/greetings/*
+!/datasets/examples/greetings/train.txt
+/datasets/examples/omega/*
+!/datasets/examples/omega/train.txt
+!/datasets/omega-alpha/
+/datasets/omega-alpha/*
+!/datasets/omega-alpha/model.toml
+
+# Never commit generated model checkpoints or local benchmark captures.
+/weights/*
+!/weights/.gitkeep
+/Docs/benchmarks/

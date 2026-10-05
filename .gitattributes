@@ -1,0 +1,7 @@
+# Keep source fingerprints and Linux scripts consistent across checkouts.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.gz binary
+*.mpk binary

@@ -1,0 +1,21 @@
+[package]
+name = "omega-datasets"
+version = "0.1.0"
+edition = "2024"
+description = "Reproducible Hugging Face corpus preparation for Omega"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6.7", features = ["derive"] }
+flate2 = "1"
+globset = "0.4"
+parquet = { version = "57", default-features = false, features = ["json", "snap", "flate2-zlib-rs", "lz4", "zstd", "brotli"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.8"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

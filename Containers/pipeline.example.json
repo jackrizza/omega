@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "datasets": ["build", "my-corpus", "--datasets-root", "/omega/datasets"],
+  "training": [
+    [
+      "train-tokenizer",
+      "--datasets-root", "/omega/datasets",
+      "--dataset", "my-corpus/release-v1/base/train",
+      "--dataset-format", "auto",
+      "--output", "/omega/datasets/my-corpus/tokenizer-v1.json",
+      "--vocab-size", "512",
+      "--chat-protocol"
+    ],
+    [
+      "train",
+      "--datasets-root", "/omega/datasets",
+      "--weights-root", "/omega/weights",
+      "--name", "container-pilot",
+      "--dataset", "my-corpus/release-v1/base/train",
+      "--dataset-format", "auto",
+      "--tokenizer", "my-corpus/tokenizer-v1.json",
+      "--epochs", "1",
+      "--max-updates", "2",
+      "--context-length", "16",
+      "--d-model", "16",
+      "--heads", "2",
+      "--layers", "1",
+      "--d-ff", "32",
+      "--cpu-threads", "1",
+      "--matmul-threads", "1"
+    ]
+  ]
+}

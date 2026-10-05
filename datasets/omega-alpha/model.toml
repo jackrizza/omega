@@ -1,0 +1,57 @@
+# Copy to datasets/<your-name>/model.toml, or run omega-datasets init <your-name>.
+# Edit repositories, file globs and permitted_use after reviewing dataset cards.
+# These examples are file/mapping examples, not a reviewed corpus recommendation.
+schema_version = 1
+output = "release-v1"
+seed = 42
+
+[split]
+train = 0.90
+validation = 0.05
+test = 0.05
+
+[limits]
+max_download_bytes = 1073741824
+max_file_bytes = 268435456
+max_record_bytes = 1048576
+max_records = 100000000
+max_normalized_bytes = 536870912
+max_files = 10000
+timeout_seconds = 300
+
+[[sources]]
+id = "stories"
+repo = "roneneldan/TinyStories"
+revision = "main" # resolved to an immutable commit in model.lock.toml
+files = ["data/train-00000-of-00004-*.parquet"]
+format = "parquet"
+language = "en"
+permitted_use = "REVIEW REQUIRED: record the license and your permitted use"
+# If the upstream schema has original-document IDs, set group_column = "...".
+# group = "book-family" instead keeps this entire source together.
+# group_namespace defaults to repo; share it for related groups across repos.
+mapping = { kind = "text", column = "text" }
+
+# Add your selected conversation source, for example:
+# [[sources]]
+# id = "dialogues"
+# repo = "HuggingFaceH4/ultrachat_200k"
+# revision = "main"
+# files = ["data/train_sft-00000-of-00003-*.parquet"]
+# format = "parquet"
+# language = "en"
+# permitted_use = "Record reviewed license and permitted use here"
+# group_column = "prompt_id"
+# mapping = { kind = "messages", column = "messages" }
+#
+# ShareGPT fields: mapping = { kind = "messages", column = "conversations",
+#   role_field = "from", content_field = "value", user_role = "human",
+#   assistant_role = "gpt", system_role = "system" }
+#
+# Instruction/response records:
+# mapping = { kind = "instruction", prompt_column = "instruction",
+#   input_column = "input", response_column = "output" }
+#
+# To preserve an official test split, use a separate source entry with:
+# partition = "test"
+# Fixed partitions conflicting with groups or exact overlaps fail the build.

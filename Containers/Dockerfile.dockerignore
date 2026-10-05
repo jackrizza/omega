@@ -1,0 +1,14 @@
+# Allow only build inputs. Never send corpora, checkpoints, .venv or credentials.
+**
+!Code/
+!Code/Rust/
+!Code/Rust/**
+!Containers/
+!Containers/Dockerfile
+!Containers/build-rust.sh
+**/target
+**/.git
+**/.cargo
+**/.env
+**/.env.*
+**/__pycache__

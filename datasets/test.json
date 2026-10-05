@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "[UNK]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": {
+    "type": "Lowercase"
+  },
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "test": 1,
+      "hello": 2,
+      "world": 3,
+      "omega": 4,
+      "tokenizer": 5,
+      "this": 6,
+      "is": 7,
+      "a": 8,
+      ".": 9,
+      ",": 10,
+      "!": 11,
+      "?": 12
+    },
+    "unk_token": "[UNK]"
+  }
+}

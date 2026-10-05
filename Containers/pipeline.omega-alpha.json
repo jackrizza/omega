@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "datasets": ["build", "omega-alpha", "--datasets-root", "/omega/datasets"],
+  "training": [
+    [
+      "train-tokenizer",
+      "--datasets-root", "/omega/datasets",
+      "--dataset", "omega-alpha/release-v1/base/train",
+      "--dataset-format", "auto",
+      "--output", "/omega/datasets/omega-alpha/omega-tokenizer-v1.json",
+      "--vocab-size", "4096",
+      "--min-frequency", "2",
+      "--chat-protocol"
+    ],
+    [
+      "train",
+      "--datasets-root", "/omega/datasets",
+      "--weights-root", "/omega/weights",
+      "--name", "omega-alpha-base-pilot",
+      "--dataset", "omega-alpha/release-v1/base/train",
+      "--dataset-format", "auto",
+      "--tokenizer", "omega-alpha/omega-tokenizer-v1.json",
+      "--backend", "cpu",
+      "--epochs", "1",
+      "--max-updates", "2",
+      "--context-length", "128",
+      "--d-model", "32",
+      "--heads", "4",
+      "--layers", "2",
+      "--d-ff", "128",
+      "--batch-size", "1",
+      "--learning-rate", "0.003",
+      "--seed", "42",
+      "--cpu-threads", "1",
+      "--matmul-threads", "1"
+    ]
+  ]
+}
