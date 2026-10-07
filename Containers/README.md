@@ -1,7 +1,9 @@
 # Omega containers
 
-A fresh Git checkout includes the example recipe, but no downloaded or prepared
-datasets. The existing `omega-alpha` release described below is local development
+A fresh Git checkout includes no `datasets/omega-alpha` project or prepared
+datasets. Create a recipe with `omega-datasets init omega-alpha` or copy the
+generic recipe from `Code/Rust/omega-datasets/examples/model.toml` into your local
+project. The existing `omega-alpha` release described below is local development
 data. Review your recipe and prepare its data before using `--skip-dataset-build`;
 that flag requires an already completed release on your machine.
 

@@ -678,7 +678,7 @@ fn chat_stops_empty_replies_resets_history_and_rejects_role_leakage() {
         "unexpected role token",
     );
     let plain =
-        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"))
+        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"))
             .unwrap();
     constant_checkpoint(root, &plain, "plain", 1);
     fails(

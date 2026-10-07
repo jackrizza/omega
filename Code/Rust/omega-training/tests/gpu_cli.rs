@@ -111,7 +111,7 @@ fn vulkan_train_resume_generate_evaluate_and_rejections() {
     std::fs::create_dir_all(datasets.join("tiny")).unwrap();
     std::fs::write(
         datasets.join("test.json"),
-        include_bytes!("../../../../datasets/test.json"),
+        include_bytes!("../../test-fixtures/wordlevel.json"),
     )
     .unwrap();
     std::fs::write(datasets.join("tiny/a.txt"), "hello world ! hello world !").unwrap();

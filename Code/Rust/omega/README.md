@@ -22,10 +22,24 @@ See [the application guide](../../../Docs/omega.md) for installation, project
 configuration, keyboard controls, persistence and recovery. Existing standalone
 CLIs remain available.
 
+`omega post-training` exposes readiness, plan/start, retained-worker recovery,
+reports, human review, explicit promotion and schema migration. The TUI exposes
+the same operations under its post-training actions. See
+[post-training usage](../../../Docs/post-training.md) for required explicit
+budgets, development suites, JSON review formats and recovery boundaries.
+Real model acceptance and sealed-test evaluation remain separate pilot gates.
+
 Public APIs: `ProjectConfig` validates the workflow schema; `JobSpec` freezes a
 launch; `JobStatus` and `JobEvent` describe persistent worker state. Project
 sequencing is in `pipeline`, local process/IPC management in `jobs`, and terminal
 state in `tui`. Shared compute operations remain in `omega-training::operations`.
+
+The TUI uses a persistent navigation sidebar, project/action detail panes and a
+four-view training monitor. `F2` opens the project, `F3` opens jobs and `F4` opens
+the workspace browser. In a job, `Tab` or `1`–`4` switches between Overview, Logs,
+Checkpoints and Results. The overview plots recent committed-update loss and
+formats throughput, elapsed time and estimated remaining time. `q` detaches;
+`s` still requests checkpoint-and-stop. See the guide for scrolling and limits.
 
 ```sh
 cargo test -p omega

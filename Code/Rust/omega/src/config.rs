@@ -21,6 +21,8 @@ pub struct ProjectConfig {
     pub benchmark: BenchmarkSettings,
     pub evaluation: EvaluationSettings,
     pub inference: InferenceSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_training: Option<crate::post_training::PostTrainingConfig>,
 }
 impl Default for ProjectConfig {
     fn default() -> Self {
@@ -37,6 +39,7 @@ impl Default for ProjectConfig {
             benchmark: BenchmarkSettings::default(),
             evaluation: EvaluationSettings::default(),
             inference: InferenceSettings::default(),
+            post_training: None,
         }
     }
 }
@@ -264,9 +267,16 @@ impl ProjectConfig {
             "Invalid conversation history"
         );
         ensure!(
-            self.omega_schema_version == 1,
+            matches!(self.omega_schema_version, 1 | 2),
             "Unsupported Omega project schema"
         );
+        if let Some(post) = &self.post_training {
+            ensure!(
+                self.omega_schema_version == 2,
+                "Post-training requires explicit migration to project schema 2"
+            );
+            post.validate()?;
+        }
         ensure!(
             !self.name.is_empty()
                 && self.name.len() <= 80
@@ -500,4 +510,16 @@ pub fn save_edited(path: &Path, original: &str, new: &str) -> Result<()> {
     drop(file);
     fs::rename(&temp, path).context("Publish edited configuration")?;
     Ok(())
+}
+
+/// Explicit opt-in migration; preserves comments and leaves job snapshots alone.
+pub fn migrate_post_training(path: &Path) -> Result<()> {
+    let original = fs::read_to_string(path)?;
+    let config = ProjectConfig::parse(&original)?;
+    ensure!(
+        config.omega_schema_version == 1,
+        "Only schema-1 projects need this migration"
+    );
+    let migrated = edit_scalar(&original, "", "omega_schema_version", "2")?;
+    save_edited(path, &original, &migrated)
 }

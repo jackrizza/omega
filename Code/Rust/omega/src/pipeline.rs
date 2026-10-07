@@ -20,6 +20,16 @@ pub fn validate_launch(
     checkpoint: &Option<PathBuf>,
 ) -> Result<()> {
     c.validate()?;
+    if matches!(action, Action::PostTrain | Action::PostTrainRecover) {
+        c.post_training
+            .as_ref()
+            .context("Configure [post_training] in a schema-2 project")?
+            .validate()?;
+        if action == &Action::PostTrainRecover {
+            ensure!(checkpoint.is_some(), "Select a saved workflow directory");
+        }
+        return Ok(());
+    }
     if !matches!(action, Action::Generate | Action::Chat | Action::Resume) {
         ensure!(
             !c.selections().is_empty(),
@@ -94,6 +104,9 @@ pub fn review(
     project: &Path,
     action: &Action,
 ) -> Result<(ProjectConfig, String)> {
+    if matches!(action, Action::PostTrain | Action::PostTrainRecover) {
+        return crate::post_training::prepare(c, project);
+    }
     let mut pinned = c.clone();
     let mut details = vec![];
     let plan = stages(c, action);
@@ -204,7 +217,7 @@ pub fn preflight(backend: omega_benchmark::Backend, index: usize) -> Result<serd
     Ok(report)
 }
 
-fn input(path: &Path) -> Result<(PathBuf, op::CheckpointInput)> {
+pub(crate) fn input(path: &Path) -> Result<(PathBuf, op::CheckpointInput)> {
     Ok((
         path.parent()
             .context("Checkpoint requires parent directory")?
@@ -220,7 +233,7 @@ fn input(path: &Path) -> Result<(PathBuf, op::CheckpointInput)> {
         },
     ))
 }
-fn limits() -> op::Limits {
+pub(crate) fn limits() -> op::Limits {
     let l = omega_training::cache::CacheLimits::default();
     op::Limits {
         max_source_bytes: l.max_source_bytes,
@@ -247,7 +260,7 @@ fn saves(c: &ProjectConfig) -> op::SaveOptions {
         save_every_epochs: c.training.save_every_epochs,
     }
 }
-fn args(c: &ProjectConfig, command: op::Command, compute: bool) -> op::Args {
+pub(crate) fn args(c: &ProjectConfig, command: op::Command, compute: bool) -> op::Args {
     op::Args {
         cpu: Default::default(),
         backend: if !compute {
@@ -269,6 +282,9 @@ fn args(c: &ProjectConfig, command: op::Command, compute: bool) -> op::Args {
 }
 
 pub fn execute(spec: &JobSpec, reporter: Arc<Reporter>, stop: Arc<AtomicBool>) -> Result<()> {
+    if matches!(spec.action, Action::PostTrain | Action::PostTrainRecover) {
+        return crate::post_training::execute(spec, reporter, stop);
+    }
     let c = &spec.config;
     let root = &spec.project;
     let datasets = absolute(root, &c.paths.datasets);
@@ -566,7 +582,9 @@ pub fn execute(spec: &JobSpec, reporter: Arc<Reporter>, stop: Arc<AtomicBool>) -
                     generation: Default::default(),
                 }
             }
-            Action::Pipeline => unreachable!("pipeline expanded above"),
+            Action::Pipeline | Action::PostTrain | Action::PostTrainRecover => {
+                unreachable!("workflow expanded above")
+            }
         };
         let compute = !matches!(stage, Action::TrainTokenizer | Action::PrepareCache);
         if compute {

@@ -114,7 +114,7 @@ fn prepare(root: &Path) {
     fs::write(root.join("data/text/a.txt"), "hello world omega").unwrap();
     fs::write(root.join("data/text/b.txt"), "this is a test").unwrap();
     fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
         root.join("data/test.json"),
     )
     .unwrap();

@@ -19,6 +19,7 @@ pre-tokenization, model, post-processing, and decoding pipeline.
 From `Code/Rust`:
 
 ```sh
+cp test-fixtures/wordlevel.json ../../datasets/test.json
 cargo run -p omega-tokenizer --bin main -- -f test.json --test-string "Hello world!"
 cargo run -p omega-tokenizer --bin main -- -f test.json --decode-ids 2,3,11
 cargo test -p omega-tokenizer
@@ -29,8 +30,9 @@ the repository location at compile time. Use an absolute path when running a
 built binary outside that checkout.
 
 The empty crate-local `test.json` is an unused placeholder retained as existing
-data. The working fixture is `datasets/test.json`; CLI `-f test.json` resolves
-to that file. Library paths are literal and do not use the CLI dataset root.
+data. The versioned fixture is `Code/Rust/test-fixtures/wordlevel.json`; the copy
+command creates an ignored local `datasets/test.json` for the legacy CLI examples.
+Library paths are literal and do not use the CLI dataset root.
 
 `--add-special-tokens` enables the loaded post-processor's special-token rules.
 It does not automatically add BOS/EOS if no such rules are saved in the file.
@@ -63,7 +65,7 @@ apply; inspect overflow encodings if truncation would otherwise lose input.
 
 - For pretrained weights, load the **exact tokenizer for those weights**. Token
   IDs index model embeddings; another vocabulary is not interchangeable.
-- `datasets/test.json` is a tiny WordLevel smoke-test fixture, not a production
+- `Code/Rust/test-fixtures/wordlevel.json` is a tiny WordLevel smoke-test fixture, not a production
   GPT tokenizer or training corpus. It lowercases text and maps unknown words to
   `[UNK]`, so decoding is not lossless. Keep it unchanged for the fixture tests;
   save real model tokenizers under a different name.

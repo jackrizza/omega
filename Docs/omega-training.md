@@ -97,10 +97,13 @@ binary `main`, so always select the package with `-p`.
 ### Inspect the tokenizer
 
 ```sh
+cp test-fixtures/wordlevel.json ../../datasets/test.json
 cargo run -p omega-tokenizer --bin main -- -f test.json --test-string "hello world !"
 ```
 
-`datasets/test.json` is a saved WordLevel tokenizer, **not a training corpus**.
+The versioned fixture is `Code/Rust/test-fixtures/wordlevel.json`; the command
+above makes an ignored local `datasets/test.json` for these legacy CLI examples.
+It is a saved WordLevel tokenizer, **not a training corpus**.
 It lowercases text, splits on whitespace/punctuation, has 13 vocabulary entries,
 and maps unknown words to `[UNK]`. Decoding is not a lossless text round trip.
 There is also an empty `omega-tokenizer/test.json`; the CLI does not use it for

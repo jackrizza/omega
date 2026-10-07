@@ -2,10 +2,12 @@
 
 This repository includes only:
 
-- `test.json`: the 13-entry WordLevel tokenizer used by offline tests.
 - `examples/greetings/train.txt` and `examples/omega/train.txt`: tiny text fixtures.
-- `omega-alpha/model.toml`: an example dataset recipe; review its source and
-  permitted-use settings before downloading anything.
+
+The shared tokenizer fixture is now
+[`Code/Rust/test-fixtures/wordlevel.json`](../Code/Rust/test-fixtures/wordlevel.json).
+`datasets/test.json`, all of `datasets/omega-alpha/`, and all of `weights/` are
+local-only and excluded from Git, including recipe files and directory markers.
 
 Downloaded corpora, generated tokenizers, caches, prepared dataset releases and
 other local project configurations are ignored. They are not required to build

@@ -415,7 +415,8 @@ fn chat_metadata_cannot_be_missing_mismatched_or_downgraded() {
 fn ordinary_control_spellings_preserve_plain_checkpoint_behavior() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json");
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json");
     let original: serde_json::Value =
         serde_json::from_slice(&fs::read(fixture_path).unwrap()).unwrap();
     let spelling = omega_tokenizer::chat::CHAT_CONTROL_TOKENS[0];

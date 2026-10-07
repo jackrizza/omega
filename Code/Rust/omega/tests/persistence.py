@@ -18,7 +18,7 @@ import termios
 import time
 
 BINARY = str(Path(sys.argv[1]).resolve())
-FIXTURE = Path(__file__).resolve().parents[4] / "datasets/test.json"
+FIXTURE = Path(__file__).resolve().parents[2] / "test-fixtures/wordlevel.json"
 
 
 def wait_for(predicate, timeout=30):
@@ -108,7 +108,7 @@ save_every_updates = 10
             def reviewed():
                 global output
                 output += drain(master, 0.2)
-                return b"START reviewed pipeline" in output
+                return b"START reviewed operation" in output
             try:
                 wait_for(reviewed)
             except AssertionError:
@@ -161,6 +161,15 @@ save_every_updates = 10
             assert other.returncode != 0 and b"already running" in other.stderr, other.stderr
             reconnect, m, s, _ = ui(config, env)
             active_ui = reconnect
+            drain(m)
+            os.write(m, b"j")
+            drain(m)
+            os.write(m, b"\r")
+            monitor = drain(m)
+            assert b"Training monitor" in monitor, "Jobs/Enter did not open the worker monitor"
+            os.write(m, b"\t")
+            drain(m)
+            os.write(m, b"1")
             drain(m)
             os.write(m, b"q")
             drain(m)

@@ -2,16 +2,15 @@
 use crate::{
     ProjectConfig, config,
     jobs::{self, Action, JobRecord, JobSpec},
-    pipeline,
+    pipeline, post_training,
 };
 use anyhow::{Context, Result, ensure};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::{
-    Frame,
-    layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-};
+use ratatui::Frame;
+mod dashboard;
+#[cfg(test)]
+mod tests;
+mod view;
 use std::{
     fs,
     path::PathBuf,
@@ -38,6 +37,13 @@ const ACTIONS: &[&str] = &[
     "Jobs / reconnect",
     "Doctor",
     "Inspect selected dataset releases",
+    "Post-training: migrate project to schema 2",
+    "Post-training: readiness",
+    "Post-training: review and start",
+    "Post-training: ranked reports and results",
+    "Post-training: submit human review",
+    "Post-training: promote candidate",
+    "Post-training: recover workflow",
 ];
 const FIELDS: &[(&str, &str)] = &[
     ("", "name"),
@@ -78,6 +84,7 @@ pub enum Screen {
     Forms,
     Editor,
     Review,
+    Confirm,
     Jobs,
     Job,
     Checkpoints,
@@ -92,11 +99,47 @@ enum Input {
     Prompt(Action),
     Encode,
     Decode,
+    Reports,
+    HumanReview,
+    Promotion,
+    Recover,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewRequest {
+    workflow: PathBuf,
+    report: PathBuf,
+    scores: PathBuf,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromotionRequest {
+    workflow: PathBuf,
+    report: PathBuf,
+    approved_by: String,
+    output: PathBuf,
+}
+enum Confirmation {
+    Migrate {
+        path: PathBuf,
+        original: String,
+    },
+    HumanReview {
+        workflow: PathBuf,
+        report: PathBuf,
+        review: post_training::HumanReview,
+    },
+    Promote(PromotionRequest),
+    Recover {
+        workflow: PathBuf,
+        spec: Box<JobSpec>,
+    },
 }
 enum Reply {
     Review(ProjectConfig, String),
     Launch(JobSpec),
     Text(String),
+    Confirm(Confirmation, String),
 }
 pub struct App {
     pub screen: Screen,
@@ -115,6 +158,8 @@ pub struct App {
     checkpoint: Option<PathBuf>,
     selected_job: Option<String>,
     reviewed: Option<ProjectConfig>,
+    review_path: Option<PathBuf>,
+    confirmation: Option<Confirmation>,
     action: Action,
     prompt: Option<String>,
     conversation: Vec<config::ChatTurn>,
@@ -123,6 +168,8 @@ pub struct App {
     editor_cursor: usize,
     receiver: Option<mpsc::Receiver<Result<Reply, String>>>,
     pub busy: bool,
+    job_tab: usize,
+    dashboard: dashboard::Dashboard,
 }
 impl App {
     pub fn new(cwd: PathBuf, state: PathBuf) -> Result<Self> {
@@ -143,6 +190,8 @@ impl App {
             checkpoint: None,
             selected_job: None,
             reviewed: None,
+            review_path: None,
+            confirmation: None,
             action: Action::Pipeline,
             prompt: None,
             conversation: vec![],
@@ -151,6 +200,8 @@ impl App {
             editor_cursor: 0,
             receiver: None,
             busy: false,
+            job_tab: 0,
+            dashboard: dashboard::Dashboard::default(),
         };
         app.refresh()?;
         Ok(app)
@@ -232,6 +283,8 @@ impl App {
                 Ok(Reply::Launch(spec)) => {
                     self.selected_job = Some(spec.id);
                     self.screen = Screen::Job;
+                    self.job_tab = 0;
+                    self.scroll = 0;
                     self.message =
                         "Worker started. q / Ctrl+C detaches without stopping it.".into();
                 }
@@ -241,11 +294,15 @@ impl App {
                     self.scroll = 0;
                     self.message.clear();
                 }
+                Ok(Reply::Confirm(confirmation, text)) => self.confirmation(confirmation, text),
             }
         }
         match jobs::list(&self.state) {
             Ok(records) => self.records = records,
             Err(e) => self.message = format!("Cannot read job history: {e:#}"),
+        }
+        if let Some(id) = &self.selected_job {
+            self.dashboard.refresh(&self.state, id);
         }
     }
     fn review(&mut self, action: Action) -> Result<()> {
@@ -257,8 +314,11 @@ impl App {
         if action == Action::Chat && !self.conversation.is_empty() {
             config.inference.history = self.conversation.clone();
         }
-        pipeline::validate_launch(&config, &action, &self.checkpoint)?;
+        if action != Action::PostTrain {
+            pipeline::validate_launch(&config, &action, &self.checkpoint)?;
+        }
         self.action = action.clone();
+        self.review_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         self.task(move || {
             let output = std::process::Command::new(std::env::current_exe()?)
@@ -275,7 +335,11 @@ impl App {
                 "Backend preflight failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            let (c, text) = pipeline::review(&config, &cwd, &action)?;
+            let (c, text) = if action == Action::PostTrain {
+                post_training::prepare(&config, &cwd)?
+            } else {
+                pipeline::review(&config, &cwd, &action)?
+            };
             Ok(Reply::Review(c, text))
         });
         Ok(())
@@ -283,10 +347,18 @@ impl App {
     fn launch(&mut self) -> Result<()> {
         let c = self.reviewed.take().context("No reviewed plan")?;
         let root = self.state.clone();
-        let path = self.config_path.clone().context("No project")?;
+        let path = self.review_path.take().context("No reviewed project")?;
         let action = self.action.clone();
-        let checkpoint = self.checkpoint.clone();
-        let prompt = self.prompt.take();
+        let checkpoint = if action == Action::PostTrain {
+            None
+        } else {
+            self.checkpoint.clone()
+        };
+        let prompt = if action == Action::PostTrain {
+            None
+        } else {
+            self.prompt.take()
+        };
         // Exact resumes use the executable retained by the selected job when known.
         let retained = if action == Action::Resume {
             checkpoint
@@ -314,6 +386,74 @@ impl App {
         self.input = Some(kind);
         self.buffer = value;
     }
+    fn confirmation(&mut self, confirmation: Confirmation, text: String) {
+        self.confirmation = Some(confirmation);
+        self.buffer = text;
+        self.screen = Screen::Confirm;
+        self.scroll = 0;
+        self.message = "Enter confirms this exact action. Esc cancels.".into();
+    }
+    fn confirm(&mut self) -> Result<()> {
+        let confirmation = self
+            .confirmation
+            .take()
+            .context("No pending confirmation")?;
+        let root = self.state.clone();
+        match confirmation {
+            Confirmation::Migrate { path, original } => {
+                ensure!(
+                    fs::read_to_string(&path)? == original,
+                    "Configuration changed; reopen and review migration again"
+                );
+                config::migrate_post_training(&path)?;
+                self.open(path)?;
+                self.screen = Screen::Editor;
+                self.message = "Migrated to schema 2. Add explicit [post_training] settings in this editor; Ctrl+S validates and saves.".into();
+            }
+            Confirmation::HumanReview {
+                workflow,
+                report,
+                review,
+            } => self.task(move || {
+                let saved = post_training::save_review(&workflow, &report, &review)?;
+                Ok(Reply::Text(format!(
+                    "Human review saved: {}\nPromotion remains a separate explicit action.",
+                    saved.display()
+                )))
+            }),
+            Confirmation::Promote(request) => self.task(move || {
+                let selection = post_training::promote(
+                    &request.workflow,
+                    &request.report,
+                    &request.approved_by,
+                    &request.output,
+                )?;
+                Ok(Reply::Text(format!(
+                    "Selection saved: {}\n\n{}",
+                    request.output.display(),
+                    serde_json::to_string_pretty(&selection)?
+                )))
+            }),
+            Confirmation::Recover { workflow, spec } => self.task(move || {
+                // Validate again at launch, retaining exactly the reviewed snapshot and binary.
+                let current = post_training::recover_spec(&workflow)?;
+                ensure!(
+                    serde_json::to_value(&current)? == serde_json::to_value(&*spec)?,
+                    "Workflow recovery settings changed; review recovery again"
+                );
+                Ok(Reply::Launch(jobs::launch(
+                    &root,
+                    &spec.config_path,
+                    Action::PostTrainRecover,
+                    Some(workflow),
+                    None,
+                    Some(&spec.executable),
+                    Some(spec.config),
+                )?))
+            }),
+        }
+        Ok(())
+    }
     fn submit(&mut self) -> Result<()> {
         let kind = self.input.take().context("No input")?;
         let value = self.buffer.clone();
@@ -340,6 +480,73 @@ impl App {
             Input::Prompt(action) => {
                 self.prompt = Some(value);
                 self.review(action)?;
+            }
+            Input::Reports => {
+                let workflow = config::absolute(&self.cwd, &PathBuf::from(value));
+                self.task(move || {
+                    let state = post_training::WorkflowState::load(&workflow)?;
+                    let mut text = format!(
+                        "Workflow: {}\nPhase: {:?}\n{}\n\n",
+                        workflow.display(),
+                        state.phase,
+                        state.message
+                    );
+                    if state.reports.is_empty() {
+                        text.push_str(
+                            "No completed reports yet. Reconnect through Jobs to monitor progress.",
+                        );
+                    } else {
+                        text.push_str(&serde_json::to_string_pretty(&post_training::rank(
+                            &workflow,
+                        )?)?);
+                        for path in state.reports {
+                            let report = post_training::read_report(&path)?;
+                            text.push_str(&format!(
+                                "\n\nReport: {}\n{}",
+                                path.display(),
+                                report.markdown()
+                            ));
+                        }
+                    }
+                    Ok(Reply::Text(text))
+                });
+            }
+            Input::HumanReview => {
+                let path = config::absolute(&self.cwd, &PathBuf::from(value));
+                self.task(move || {
+                    let request: ReviewRequest = jobs::read_json(&path)?;
+                    let base = path.parent().context("Request file has no directory")?;
+                    let workflow = config::absolute(base, &request.workflow);
+                    let report = config::absolute(base, &request.report);
+                    let review: post_training::HumanReview = jobs::read_json(&config::absolute(base, &request.scores))?;
+                    post_training::WorkflowState::load(&workflow)?;
+                    let text = format!("Submit immutable human review\nWorkflow: {}\nReport: {}\n\n{}\n\nEnter submits these human-provided scores. All report/rubric and completeness checks must pass.", workflow.display(),report.display(),serde_json::to_string_pretty(&review)?);
+                    Ok(Reply::Confirm(Confirmation::HumanReview { workflow, report, review }, text))
+                });
+            }
+            Input::Promotion => {
+                let path = config::absolute(&self.cwd, &PathBuf::from(value));
+                self.task(move || {
+                    let mut request: PromotionRequest = jobs::read_json(&path)?;
+                    let base = path.parent().context("Request file has no directory")?;
+                    request.workflow = config::absolute(base, &request.workflow);
+                    request.report = fs::canonicalize(config::absolute(base, &request.report))?;
+                    request.output = config::absolute(base, &request.output);
+                    ensure!(!request.approved_by.trim().is_empty(), "Explicit human approver is required");
+                    let ranked = post_training::rank(&request.workflow)?;
+                    ensure!(ranked.iter().any(|c| c.eligible && fs::canonicalize(&c.report).ok().as_ref() == Some(&request.report)), "Candidate has failed or pending gates; inspect ranked reports first");
+                    let text = format!("Approve candidate selection\nWorkflow: {}\nReport: {}\nApprover: {}\nNew selection manifest: {}\n\n{}\n\nEnter explicitly promotes this candidate. Sealed-test acceptance remains separate.",request.workflow.display(),request.report.display(),request.approved_by,request.output.display(),serde_json::to_string_pretty(&ranked)?);
+                    Ok(Reply::Confirm(Confirmation::Promote(request),text))
+                });
+            }
+            Input::Recover => {
+                let workflow =
+                    fs::canonicalize(config::absolute(&self.cwd, &PathBuf::from(value)))?;
+                self.task(move || {
+                    let spec = post_training::recover_spec(&workflow)?;
+                    let text = format!("Recover workflow: {}\nRetained executable: {}\nSHA256: {}\n\nFrozen configuration:\n{}\nEnter launches the retained worker with this frozen configuration.",workflow.display(),spec.executable.display(),spec.executable_sha256,toml::to_string_pretty(&spec.config)?);
+                    Ok(Reply::Confirm(Confirmation::Recover { workflow, spec: Box::new(spec) },text))
+                });
             }
             Input::Encode | Input::Decode => {
                 let c = self.config()?;
@@ -489,6 +696,33 @@ impl App {
                     self.buffer = lines.join("\n");
                     self.screen = Screen::Result;
                 }
+                18 => {
+                    ensure!(
+                        self.text == self.original,
+                        "Save or discard unsaved edits before migration"
+                    );
+                    ensure!(
+                        self.config()?.omega_schema_version == 1,
+                        "Project already uses schema 2"
+                    );
+                    let path = self.config_path.clone().context("No project")?;
+                    self.confirmation(Confirmation::Migrate { path: path.clone(), original: self.original.clone() },
+                        format!("Migrate {} from schema 1 to schema 2.\nExisting configuration and job snapshots are preserved.\nAfter migration, configure explicit [post_training] inputs, budgets and gates in the TOML editor.\n\nEnter writes the schema change; Esc cancels.",path.display()));
+                }
+                19 => {
+                    let c = self.config()?;
+                    let cwd = self.cwd.clone();
+                    self.task(move || {
+                        Ok(Reply::Text(serde_json::to_string_pretty(
+                            &post_training::readiness(&c, &cwd)?,
+                        )?))
+                    });
+                }
+                20 => self.review(Action::PostTrain)?,
+                21 => self.input(Input::Reports, self.workflow_default()),
+                22 => self.input(Input::HumanReview, String::new()),
+                23 => self.input(Input::Promotion, String::new()),
+                24 => self.input(Input::Recover, self.workflow_default()),
                 _ => {}
             },
             Screen::Forms => {
@@ -506,10 +740,14 @@ impl App {
                 self.input(Input::Form(self.cursor), text);
             }
             Screen::Review => self.launch()?,
+            Screen::Confirm => self.confirm()?,
             Screen::Jobs => {
                 if let Some(r) = self.records.get(self.cursor) {
                     self.selected_job = Some(r.id.clone());
+                    self.dashboard.refresh(&self.state, &r.id);
                     self.screen = Screen::Job;
+                    self.job_tab = 0;
+                    self.scroll = 0;
                 }
             }
             Screen::Checkpoints => {
@@ -523,6 +761,13 @@ impl App {
         }
         Ok(())
     }
+    fn workflow_default(&self) -> String {
+        self.config()
+            .ok()
+            .and_then(|c| c.post_training)
+            .map(|p| config::absolute(&self.cwd, &p.output).display().to_string())
+            .unwrap_or_default()
+    }
     /// Returns true only to detach the UI, never to stop a worker.
     pub fn key(&mut self, key: KeyEvent) -> Result<bool> {
         if key.kind != KeyEventKind::Press {
@@ -530,6 +775,10 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Ok(true);
+        }
+        if self.busy {
+            // Keep the request's project/action stable until its reviewed reply arrives.
+            return Ok(key.code == KeyCode::Char('q'));
         }
         if self.input.is_some() {
             match key.code {
@@ -620,7 +869,46 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => return Ok(true),
+            KeyCode::F(2) if self.config_path.is_some() => {
+                self.screen = Screen::Project;
+                self.cursor = 0;
+                self.scroll = 0;
+            }
+            KeyCode::F(3) => {
+                self.screen = Screen::Jobs;
+                self.cursor = 0;
+                self.scroll = 0;
+            }
+            KeyCode::F(4) => {
+                self.screen = Screen::Welcome;
+                self.cursor = 0;
+                self.refresh()?;
+            }
+            KeyCode::Tab | KeyCode::BackTab if self.screen == Screen::Job => {
+                self.job_tab = (self.job_tab + if key.code == KeyCode::Tab { 1 } else { 3 }) % 4;
+                self.scroll = 0;
+            }
+            KeyCode::Char(c @ '1'..='4') if self.screen == Screen::Job => {
+                self.job_tab = (c as u8 - b'1') as usize;
+                self.scroll = 0;
+            }
+            KeyCode::Up | KeyCode::PageUp if self.screen == Screen::Job && self.job_tab == 1 => {
+                self.scroll =
+                    self.scroll
+                        .saturating_add(if key.code == KeyCode::Up { 1 } else { 10 });
+            }
+            KeyCode::Down | KeyCode::PageDown
+                if self.screen == Screen::Job && self.job_tab == 1 =>
+            {
+                self.scroll =
+                    self.scroll
+                        .saturating_sub(if key.code == KeyCode::Down { 1 } else { 10 });
+            }
+            KeyCode::End if self.screen == Screen::Job => self.scroll = 0,
             KeyCode::Esc => {
+                self.confirmation = None;
+                self.reviewed = None;
+                self.review_path = None;
                 self.screen = if self.config_path.is_some() {
                     Screen::Project
                 } else {
@@ -730,150 +1018,7 @@ impl App {
         Ok(false)
     }
     pub fn render(&self, frame: &mut Frame) {
-        let areas = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(2),
-            Constraint::Length(4),
-        ])
-        .split(frame.area());
-        frame.render_widget(
-            Paragraph::new(format!(
-                "OMEGA  | {:?} | {}{}",
-                self.screen,
-                self.cwd.display(),
-                if self.text != self.original {
-                    " | unsaved"
-                } else {
-                    ""
-                }
-            ))
-            .block(Block::bordered())
-            .style(Style::default().fg(Color::Cyan)),
-            areas[0],
-        );
-        let items = match self.screen {
-            Screen::Welcome => Some(
-                self.entries
-                    .iter()
-                    .map(|p| {
-                        format!(
-                            "{} {}",
-                            if p.is_dir() { "[dir]" } else { "[toml]" },
-                            p.file_name().unwrap_or_default().to_string_lossy()
-                        )
-                    })
-                    .chain(
-                        self.recent
-                            .iter()
-                            .map(|p| format!("[recent] {}", p.display())),
-                    )
-                    .collect::<Vec<_>>(),
-            ),
-            Screen::Project => Some(ACTIONS.iter().map(|x| x.to_string()).collect()),
-            Screen::Forms => Some(FIELDS.iter().map(|(s, k)| format!("{s}.{k}")).collect()),
-            Screen::Jobs => Some(
-                self.records
-                    .iter()
-                    .map(|r| {
-                        format!(
-                            "{}  {:?}  {}  {}",
-                            r.id,
-                            r.status,
-                            r.stage,
-                            r.project.display()
-                        )
-                    })
-                    .collect(),
-            ),
-            Screen::Checkpoints => Some(
-                self.checkpoints
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect(),
-            ),
-            _ => None,
-        };
-        if let Some(items) = items {
-            let mut state = ListState::default().with_selected(Some(self.cursor));
-            frame.render_stateful_widget(
-                List::new(items.into_iter().map(ListItem::new))
-                    .block(Block::bordered())
-                    .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)),
-                areas[1],
-                &mut state,
-            );
-        } else {
-            let mut scroll = self.scroll;
-            let body=match self.screen {
-                Screen::Editor=>{let line=self.text.chars().take(self.editor_cursor).filter(|c|*c=='\n').count() as u16;scroll=line.saturating_sub(areas[1].height.saturating_sub(4));self.text.clone()},
-                Screen::Job=>self.records.iter().find(|r|Some(&r.id)==self.selected_job.as_ref()).map(|r|{
-                    let elapsed=r.progress["elapsed_seconds"].as_f64().unwrap_or(0.0).max(0.001);let targets=r.progress["run_targets"].as_u64().unwrap_or(0);let updates=r.progress["completed_updates"].as_u64().unwrap_or(0);let run_updates=r.progress["run_updates"].as_u64().unwrap_or(0);let eta=r.total_updates.filter(|_|run_updates>0).map(|total|elapsed*(total.saturating_sub(updates))as f64/run_updates as f64);
-                    let history=jobs::job_dir(&self.state,&r.id).ok().and_then(|p|jobs::read_json::<Vec<PathBuf>>(&p.join("checkpoints.json")).ok()).unwrap_or_default();
-                    let log=jobs::job_dir(&self.state,&r.id).ok().and_then(|p|jobs::tail(&p.join("worker.log"),8000).ok()).unwrap_or_default();
-                    format!("Job {}  {:?}\nStage: {}\nElapsed {:.1}s | {:.1} targets/s | remaining {:?}s\nUpdates: {} / {:?}\nProgress: {}\nCheckpoint: {:?}\nRecent checkpoints: {:?}\nError: {}\nResult: {}\n\n{}",r.id,r.status,r.stage,elapsed,targets as f64/elapsed,eta,updates,r.total_updates,r.progress,r.checkpoint,history.iter().rev().take(8).collect::<Vec<_>>(),r.error.as_deref().unwrap_or(""),r.result.as_ref().map(|v|serde_json::to_string_pretty(v).unwrap_or_default()).unwrap_or_default(),log)
-                }).unwrap_or_else(||"Waiting for worker status…".into()),
-                _=>self.buffer.clone()
-            };
-            frame.render_widget(
-                Paragraph::new(body)
-                    .block(Block::bordered())
-                    .scroll((scroll, 0))
-                    .wrap(Wrap { trim: false }),
-                areas[1],
-            );
-            if self.screen == Screen::Editor {
-                let prefix: String = self.text.chars().take(self.editor_cursor).collect();
-                let line = prefix
-                    .lines()
-                    .count()
-                    .saturating_sub(usize::from(!prefix.ends_with('\n')))
-                    as u16;
-                let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() as u16;
-                frame.set_cursor_position((
-                    areas[1].x + 1 + col.min(areas[1].width.saturating_sub(3)),
-                    areas[1].y
-                        + 1
-                        + line
-                            .saturating_sub(scroll)
-                            .min(areas[1].height.saturating_sub(3)),
-                ));
-            }
-        }
-        let help = match self.screen {
-            Screen::Welcome => {
-                "Enter browse/open | w directory | o file | c create | i import recipe | Backspace parent | j jobs"
-            }
-            Screen::Editor => "TOML editor: Ctrl+S validate/save | Esc return | Ctrl+C detach",
-            Screen::Job => {
-                "s Save checkpoint and stop | r Resume | c Continue chat | n New chat | q Detach"
-            }
-            Screen::Review => {
-                "Enter START reviewed pipeline | Esc cancel | arrows/page keys scroll | q Detach"
-            }
-            _ => {
-                "Enter select | Ctrl+S save | Esc back | w workspace | j jobs | q Detach (training continues)"
-            }
-        };
-        frame.render_widget(
-            Paragraph::new(format!("{help}\n{}", self.message))
-                .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::TOP)),
-            areas[2],
-        );
-        if self.input.is_some() {
-            let area = Rect::new(
-                2,
-                frame.area().height / 2,
-                frame.area().width.saturating_sub(4),
-                5,
-            );
-            frame.render_widget(ratatui::widgets::Clear, area);
-            frame.render_widget(
-                Paragraph::new(self.buffer.as_str())
-                    .block(Block::bordered().title(" Enter submits | Esc cancels ")),
-                area,
-            );
-        }
+        view::render(self, frame);
     }
 }
 fn r_checkpoint(spec: &JobSpec, records: &[JobRecord]) -> Option<PathBuf> {

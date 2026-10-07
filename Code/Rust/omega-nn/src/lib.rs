@@ -321,8 +321,8 @@ mod tests {
 
     #[test]
     fn tokenizer_fixture_integrates_with_model() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test-fixtures/wordlevel.json");
         let tokenizer = Tokens::new(path).unwrap();
         let vocab_size = validate_tokenizer(&tokenizer).unwrap();
         assert_eq!(vocab_size, 13);

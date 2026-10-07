@@ -72,7 +72,7 @@ fn config() -> GptConfig {
 }
 fn tokenizer() -> omega_tokenizer::Tokens {
     omega_tokenizer::Tokens::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
     )
     .unwrap()
 }

@@ -38,7 +38,7 @@ impl Drop for TempDir {
 
 pub fn save_pipeline(path: &Path) {
     let mut tokenizer =
-        Tokenizer::from_bytes(include_bytes!("../../../../../datasets/test.json")).unwrap();
+        Tokenizer::from_bytes(include_bytes!("../../../test-fixtures/wordlevel.json")).unwrap();
     tokenizer
         .add_special_tokens([
             AddedToken::from("<start>", true),

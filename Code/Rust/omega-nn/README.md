@@ -12,6 +12,7 @@ Run from `Code/Rust`. Select `-p omega-nn` because the tokenizer also has a bina
 named `main`. Model/tokenizer options go before the subcommand.
 
 ```sh
+cp test-fixtures/wordlevel.json ../../datasets/test.json
 cargo run -p omega-nn --bin main -- -f test.json forward --text "hello world!"
 cargo run -p omega-nn --bin main -- -f test.json train --text "hello world ! hello world ! hello world !" --prompt "hello" --steps 100 --learning-rate 0.003 --max-new-tokens 5
 cargo run -p omega-nn --bin main -- --d-model 16 --heads 2 --layers 1 --d-ff 32 train --text "hello world !" --prompt "hello" --steps 50 --max-new-tokens 2

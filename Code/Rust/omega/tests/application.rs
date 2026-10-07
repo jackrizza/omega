@@ -112,7 +112,7 @@ fn forms_preserve_comments_and_validate_raw_edits_and_imports() {
     assert!(config::edit_scalar(&edited, "training", "batch_size", "0").is_err());
     assert!(
         ProjectConfig::parse(
-            &edited.replace("omega_schema_version = 1", "omega_schema_version = 2")
+            &edited.replace("omega_schema_version = 1", "omega_schema_version = 3")
         )
         .is_err()
     );

@@ -10,7 +10,8 @@ use omega_training::{
 use std::{fs, path::Path};
 
 fn tokenizer() -> Tokens {
-    Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json")).unwrap()
+    Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"))
+        .unwrap()
 }
 
 fn options(format: DatasetFormat) -> CacheOptions {

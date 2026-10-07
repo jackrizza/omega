@@ -163,7 +163,7 @@ fn library_paths_follow_working_directory_but_cli_paths_follow_datasets() {
         temp.path(),
         &[
             "-f",
-            "test.json",
+            "../Code/Rust/test-fixtures/wordlevel.json",
             "--test-string",
             "hello",
             "--add-special-tokens",

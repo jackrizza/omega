@@ -59,8 +59,9 @@ impl Fixture {
             source_bytes += text.len();
             fs::write(texts.join(format!("{index:02}.txt")), text).map_err(|e| e.to_string())?;
         }
-        let tokenizer =
-            Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"))?;
+        let tokenizer = Tokens::new(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
+        )?;
         let options = CacheOptions {
             format: DatasetFormat::Text,
             context_length: CONTEXT,

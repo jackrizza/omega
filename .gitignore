@@ -22,9 +22,8 @@ Thumbs.db
 !/Code/Rust/Cargo.lock
 
 # Corpora, downloaded tokenizers, caches and model projects are local data.
-# Only explicitly reviewed tiny fixtures and the example recipe are versioned.
+# Only explicitly reviewed tiny text examples are versioned here.
 /datasets/*
-!/datasets/test.json
 !/datasets/README.md
 !/datasets/examples/
 /datasets/examples/*
@@ -34,11 +33,8 @@ Thumbs.db
 !/datasets/examples/greetings/train.txt
 /datasets/examples/omega/*
 !/datasets/examples/omega/train.txt
-!/datasets/omega-alpha/
-/datasets/omega-alpha/*
-!/datasets/omega-alpha/model.toml
 
 # Never commit generated model checkpoints or local benchmark captures.
-/weights/*
-!/weights/.gitkeep
+/weights/
+/Weights/
 /Docs/benchmarks/

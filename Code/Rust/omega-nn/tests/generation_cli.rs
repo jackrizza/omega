@@ -41,6 +41,11 @@ fn cli(args: &[&str]) -> Output {
 
 fn train(extra: &[&str]) -> Output {
     let mut args = vec![
+        "-f",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../test-fixtures/wordlevel.json"
+        ),
         "--context-length",
         "8",
         "--d-model",

@@ -2,7 +2,10 @@
 
 The workspace is `Code/Rust`. The initial Git file set includes source, docs,
 container/script tooling, `Cargo.lock`, and the tiny offline fixtures documented
-in [datasets/README.md](../datasets/README.md). Generated checkpoints, corpora,
+in [datasets/README.md](../datasets/README.md) and
+[Rust test fixtures](../Code/Rust/test-fixtures/README.md). `datasets/test.json`,
+`datasets/omega-alpha/` and both `weights/` and `Weights/` are excluded entirely.
+Generated checkpoints, corpora,
 downloaded tokenizers, local benchmark captures, target directories and `.env`
 files are excluded. The host-specific `Code/Rust/.cargo/config.toml` also stays
 local; a fresh checkout uses Cargo's normal target directory.

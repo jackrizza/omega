@@ -44,6 +44,11 @@ enum Command {
     Stop { id: String },
     /// Reconnect to a live worker's status
     Status { id: String },
+    /// Inspect, run, review and explicitly promote a post-training experiment
+    PostTraining {
+        #[command(subcommand)]
+        command: PostTrainingCommand,
+    },
     #[command(name = "__worker", hide = true)]
     Worker {
         #[arg(long)]
@@ -52,8 +57,155 @@ enum Command {
         id: String,
     },
 }
+
+#[derive(Subcommand)]
+enum PostTrainingCommand {
+    /// Check parent and partition readiness without training or evaluation
+    Ready { config: PathBuf },
+    /// Resolve a frozen experiment and show its budgets before launch
+    Plan { config: PathBuf },
+    /// Start the approved bounded post-training workflow in the background
+    Start {
+        config: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Explicitly recover a workflow using its retained executable/settings
+    Recover {
+        workflow: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// List candidate reports, gates, pending reviews and validation ranking
+    Reports { workflow: PathBuf },
+    /// Save human scores tied to an exact completed report and rubric
+    Review {
+        workflow: PathBuf,
+        report: PathBuf,
+        scores: PathBuf,
+    },
+    /// Record explicit human promotion; sealed-test acceptance remains separate
+    Promote {
+        workflow: PathBuf,
+        report: PathBuf,
+        #[arg(long)]
+        approved_by: String,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Explicitly migrate a project to the post-training configuration schema
+    Migrate { config: PathBuf },
+}
+
+fn post_training(command: PostTrainingCommand) -> Result<()> {
+    match command {
+        PostTrainingCommand::Ready { config } => {
+            let path = std::fs::canonicalize(config)?;
+            let config = omega::ProjectConfig::load(&path)?;
+            let report = omega::post_training::readiness(
+                &config,
+                path.parent().context("Project has no directory")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            anyhow::ensure!(
+                report.passed,
+                "Post-training readiness checks failed; inspect the report"
+            );
+        }
+        PostTrainingCommand::Plan { config } => {
+            let path = std::fs::canonicalize(config)?;
+            let config = omega::ProjectConfig::load(&path)?;
+            let (_, summary) = omega::post_training::prepare(
+                &config,
+                path.parent().context("Project has no directory")?,
+            )?;
+            println!("{summary}");
+        }
+        PostTrainingCommand::Start { config, yes } => {
+            anyhow::ensure!(
+                yes,
+                "Inspect `omega post-training plan PATH`, then pass --yes to start"
+            );
+            let path = std::fs::canonicalize(config)?;
+            let config = omega::ProjectConfig::load(&path)?;
+            let (approved, _) = omega::post_training::prepare(
+                &config,
+                path.parent().context("Project has no directory")?,
+            )?;
+            let spec = omega::jobs::launch(
+                &omega::jobs::state_root()?,
+                &path,
+                omega::jobs::Action::PostTrain,
+                None,
+                None,
+                None,
+                Some(approved),
+            )?;
+            println!("{}", spec.id);
+        }
+        PostTrainingCommand::Recover { workflow, yes } => {
+            anyhow::ensure!(
+                yes,
+                "Inspect the workflow and retained settings, then pass --yes to recover"
+            );
+            let workflow = std::fs::canonicalize(workflow)?;
+            let retained = omega::post_training::recover_spec(&workflow)?;
+            let spec = omega::jobs::launch(
+                &omega::jobs::state_root()?,
+                &retained.config_path,
+                omega::jobs::Action::PostTrainRecover,
+                Some(workflow),
+                None,
+                Some(&retained.executable),
+                Some(retained.config),
+            )?;
+            println!("{}", spec.id);
+        }
+        PostTrainingCommand::Reports { workflow } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&omega::post_training::rank(&workflow)?)?
+            );
+        }
+        PostTrainingCommand::Review {
+            workflow,
+            report,
+            scores,
+        } => {
+            let review: omega::post_training::HumanReview = omega::jobs::read_json(&scores)?;
+            println!(
+                "{}",
+                omega::post_training::save_review(&workflow, &report, &review)?.display()
+            );
+        }
+        PostTrainingCommand::Promote {
+            workflow,
+            report,
+            approved_by,
+            output,
+            yes,
+        } => {
+            anyhow::ensure!(
+                yes,
+                "Review candidate gates and human scores, then pass --yes to promote"
+            );
+            let selection =
+                omega::post_training::promote(&workflow, &report, &approved_by, &output)?;
+            println!("{}", serde_json::to_string_pretty(&selection)?);
+        }
+        PostTrainingCommand::Migrate { config } => {
+            omega::config::migrate_post_training(&config)?;
+            println!("{}", config.display());
+        }
+    }
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Some(Command::PostTraining { command }) => post_training(command)?,
         Some(Command::Resume {
             config,
             checkpoint,
@@ -152,6 +304,91 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("Error: {e:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_training_subcommands_parse_explicit_paths_and_options() {
+        for operation in ["ready", "plan", "start", "migrate"] {
+            assert!(
+                Cli::try_parse_from(["omega", "post-training", operation, "model.toml"]).is_ok()
+            );
+        }
+        for operation in ["recover", "reports"] {
+            assert!(Cli::try_parse_from(["omega", "post-training", operation, "workflow"]).is_ok());
+        }
+        assert!(
+            Cli::try_parse_from([
+                "omega",
+                "post-training",
+                "review",
+                "workflow",
+                "report.json",
+                "scores.json"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "omega",
+                "post-training",
+                "promote",
+                "workflow",
+                "report.json",
+                "--approved-by",
+                "Human reviewer",
+                "--output",
+                "selection.json",
+                "--yes"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "omega",
+                "post-training",
+                "promote",
+                "workflow",
+                "report.json"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["omega", "post-training", "start", "model.toml", "--unknown"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn launching_and_promotion_require_yes_before_accessing_inputs() {
+        for command in [
+            PostTrainingCommand::Start {
+                config: "missing".into(),
+                yes: false,
+            },
+            PostTrainingCommand::Recover {
+                workflow: "missing".into(),
+                yes: false,
+            },
+            PostTrainingCommand::Promote {
+                workflow: "missing".into(),
+                report: "missing".into(),
+                approved_by: "Human".into(),
+                output: "unused".into(),
+                yes: false,
+            },
+        ] {
+            assert!(
+                post_training(command)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("--yes")
+            );
         }
     }
 }

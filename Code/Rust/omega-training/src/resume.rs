@@ -195,6 +195,20 @@ impl ResumeManifest {
     }
 
     fn validate(&self) -> Result<(), String> {
+        self.validate_structure()?;
+        if self.runtime != ResumeRuntime::current() {
+            return Err("Resume runtime/build identity differs; continuation requires the same supported build and platform".into());
+        }
+        if self.gpu_execution.is_none()
+            && self.cuda_execution.is_none()
+            && self.cpu_execution != execution_profile()?
+        {
+            return Err("Resume CPU execution profile differs; use the original thread settings and supported kernel/build on the same host".into());
+        }
+        Ok(())
+    }
+
+    fn validate_structure(&self) -> Result<(), String> {
         self.validate_objective()?;
         if matches!(self.schema_version, 7 | 8) {
             if self.execution_mode != CUDA_EXECUTION_MODE || self.gpu_execution.is_some() {
@@ -230,16 +244,7 @@ impl ResumeManifest {
         {
             return Err("Unsupported resume execution, RNG or optimizer configuration".into());
         }
-        if self.runtime != ResumeRuntime::current() {
-            return Err("Resume runtime/build identity differs; continuation requires the same supported build and platform".into());
-        }
         self.cpu_execution.validate()?;
-        if self.gpu_execution.is_none()
-            && self.cuda_execution.is_none()
-            && self.cpu_execution != execution_profile()?
-        {
-            return Err("Resume CPU execution profile differs; use the original thread settings and supported kernel/build on the same host".into());
-        }
         self.config().validate()?;
         self.options.validate(self.example_count)?;
         if !self.learning_rate().is_finite() || self.learning_rate() <= 0.0 {
@@ -739,10 +744,90 @@ pub fn initialize_assistant_stage_on_device<
     options: SessionOptions,
     device: &B::Device,
 ) -> Result<(TrainingSession<S, B>, Tokens, ParentCheckpoint), String> {
+    let resume = read_resume_manifest(path)?;
+    initialize_assistant_stage_impl(path, source, learning_rate, seed, options, device, resume)
+}
+
+/// Verify a weights-transfer parent without requiring its historical runtime.
+/// Supports resume schemas 3–8 with a frozen chat tokenizer (checkpoint schema 2).
+/// Both payload hashes and header identities are checked; tensor decoding is done
+/// by the stage initializer. Optimizer state is verified but never transferred.
+/// Legacy schemas 1/2 and inference-only checkpoints require their original tools.
+pub fn read_stage_parent(path: &Path) -> Result<ResumeManifest, String> {
+    let (_, tokenizer, header) = load_checkpoint_header(path)?;
+    let header = header.ok_or("Stage transfer requires a versioned checkpoint")?;
+    header
+        .chat
+        .as_ref()
+        .ok_or("Parent has no frozen chat protocol")?
+        .validate_tokenizer(&tokenizer)?;
+    let bytes = fs::read(path.join(RESUME))
+        .map_err(|e| format!("Cannot read stage parent resume manifest: {e}"))?;
+    let digest = fs::read(path.join(RESUME_HASH))
+        .map_err(|e| format!("Cannot read stage parent resume checksum: {e}"))?;
+    if digest != sha256_bytes(&bytes).as_bytes() {
+        return Err("Resume manifest SHA256 mismatch; checkpoint is corrupt".into());
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("Invalid stage parent manifest: {e}"))?;
+    let version = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64);
+    if !matches!(version, Some(3..=8)) {
+        return Err("Stage transfer supports resume schemas 3 through 8 only".into());
+    }
+    if (!matches!(version, Some(7 | 8)) && value.get("cuda_execution").is_some())
+        || (!matches!(version, Some(4 | 6)) && value.get("gpu_execution").is_some())
+    {
+        return Err("Stage parent contains incompatible backend fields".into());
+    }
+    let resume: ResumeManifest =
+        serde_json::from_value(value).map_err(|e| format!("Invalid stage parent manifest: {e}"))?;
+    resume.validate_structure()?;
+    if resume.model != header.model || resume.tokenizer != header.tokenizer {
+        return Err("Parent inference/training headers disagree".into());
+    }
+    if let Some(training) = &header.metadata.training
+        && (training.seed != resume.initialization_seed
+            || training.learning_rate.to_bits() != resume.learning_rate_bits)
+    {
+        return Err("Parent training settings disagree with checkpoint provenance".into());
+    }
+    read_verified(path, MODEL, &resume.model_sha256)?;
+    read_verified(path, OPTIMIZER, &resume.optimizer_sha256)?;
+    Ok(resume)
+}
+
+/// Explicit weights-only transfer across supported builds/backends into a new
+/// assistant stage. Source must use the parent's exact tokenizer and protocol.
+/// Exact resume remains strict; optimizer, progress and sampler start fresh.
+pub fn initialize_assistant_stage_transfer_on_device<
+    S: ExampleSource,
+    B: AutodiffBackend<FloatElem = f32>,
+>(
+    path: &Path,
+    source: S,
+    learning_rate: f64,
+    seed: u64,
+    options: SessionOptions,
+    device: &B::Device,
+) -> Result<(TrainingSession<S, B>, Tokens, ParentCheckpoint), String> {
+    let resume = read_stage_parent(path)?;
+    initialize_assistant_stage_impl(path, source, learning_rate, seed, options, device, resume)
+}
+
+fn initialize_assistant_stage_impl<S: ExampleSource, B: AutodiffBackend<FloatElem = f32>>(
+    path: &Path,
+    source: S,
+    learning_rate: f64,
+    seed: u64,
+    options: SessionOptions,
+    device: &B::Device,
+    resume: ResumeManifest,
+) -> Result<(TrainingSession<S, B>, Tokens, ParentCheckpoint), String> {
     if source.objective() != ASSISTANT_TARGETS_OBJECTIVE {
         return Err("New assistant stage requires assistant-target examples".into());
     }
-    let resume = read_resume_manifest(path)?;
     let (config, tokenizer, manifest) = load_checkpoint_header(path)?;
     let manifest = manifest.ok_or("New stage requires a versioned parent checkpoint")?;
     let chat = manifest
@@ -820,7 +905,7 @@ mod tests {
     }
 
     fn tokenizer() -> Tokens {
-        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"))
+        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"))
             .unwrap()
     }
 

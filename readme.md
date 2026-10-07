@@ -56,5 +56,7 @@ running a binary.
 The workspace uses edition 2024. Rust 1.93.0 on Windows was verified in the
 2026-09-27 source review; this is not a declared minimum supported Rust version.
 The empty `Code/Rust/omega-tokenizer/test.json` is an unused placeholder, retained
-as existing data. The documented tokenizer fixture is `datasets/test.json`;
-tokenizer CLI `-f test.json` resolves there, while library paths are used literally.
+as existing data. The tokenizer fixture is `Code/Rust/test-fixtures/wordlevel.json`.
+Legacy CLI examples using `test.json` require a local copy under `datasets/`;
+from `Code/Rust`, run `cp test-fixtures/wordlevel.json ../../datasets/test.json`.
+That local copy, `datasets/omega-alpha/`, and all of `weights/` are excluded from Git.

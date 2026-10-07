@@ -46,8 +46,8 @@ Any intentional change needs tests, documentation, and a compatibility decision.
 - **Tokenizer identity:** token IDs must match model embeddings and the output
   head. Equal vocabulary size alone does not prove compatibility. Do not change
   IDs, add guessed special tokens, or silently replace the saved pipeline.
-- **Fixtures:** `datasets/test.json` is the 13-entry WordLevel test fixture, not a
-  corpus or production tokenizer. Preserve it and existing fixture expectations;
+- **Fixtures:** `Code/Rust/test-fixtures/wordlevel.json` is the 13-entry WordLevel
+  test fixture, not a corpus or production tokenizer. Preserve its token IDs and expectations;
   place alternative tokenizers in separately named files.
 - **Causality:** a prediction cannot see future tokens. Shift next-token labels
   exactly once. Preserve prefix-invariance tests when changing attention.

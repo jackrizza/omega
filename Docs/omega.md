@@ -5,6 +5,16 @@ background workers. It contains the existing Rust libraries, so no source checko
 Python installation, sibling executables or Rust installation is needed to use a
 release binary. It does not provision machines or install GPU drivers.
 
+After base training, see [post-training usage](post-training.md) for schema-2
+configuration, readiness, bounded SFT/evaluation, human scoring and explicit
+checkpoint promotion. The same workflow is available in the TUI and through
+`omega post-training`; real data and quality acceptance remain separate gates.
+
+![Omega dashboard rendered from the Ratatui test backend with sample data](images/omega-dashboard.png)
+
+The preview uses test data. Its pane layout is inspired by the
+[openapi-tui demo](https://github.com/zaghaghi/openapi-tui/blob/main/static/demo.gif).
+
 ## Installation and compatibility
 
 The [release workflow](github-builds.md) builds downloadable artifacts on pushes
@@ -146,9 +156,35 @@ Esc returns. Only selected stages run. A `training.max_updates` bounded segment
 saves and stops the pipeline; it does not proceed into assistant/evaluation stages
 as if the requested training epochs had finished.
 
-The dashboard displays the current stage, update/epoch counts, loss, throughput,
-elapsed/estimated remaining time, latest checkpoint and bounded logs. Checkpoint
-inventory provides completed checkpoint browsing. Estimates are approximate.
+The interface has a persistent navigation sidebar on terminals at least 100 columns
+wide. `F2` opens the project action menu, `F3` opens Jobs / reconnect, and `F4` opens
+the workspace browser. Project actions and configuration fields show a details pane
+when space permits. Narrow terminals hide secondary panes; text editing retains
+its normal key bindings. Form rows show their current values.
+
+The job monitor has four views, selected with `Tab`, `Shift+Tab`, or `1`–`4`:
+
+- **Overview:** worker status/stage, committed-update progress, loss, epoch,
+  learning rate, gradient norm, average targets/second, elapsed time and ETA,
+  recent loss chart, log tail and checkpoint names.
+- **Logs:** the bounded worker-log tail. Up/PageUp moves into older retained
+  output; Down/PageDown moves toward the end. `End` returns to following new output.
+  Long log lines are clipped to one terminal row.
+- **Checkpoints:** the latest complete checkpoint and up to 100 recent saves,
+  including their full paths. Arrow/page keys scroll. Use the project's checkpoint
+  inventory to select a checkpoint for an operation.
+- **Results:** generated text, chat/evaluation results and worker errors. `c`
+  continues a completed chat and `n` starts a new one, as on the other job views.
+
+Unknown metrics display a dash. Throughput is the current run's average; ETA uses
+the current run's update rate and the remaining update count. It is an approximate
+training-stage estimate, excluding later pipeline stages and future save overhead.
+Stopped/completed/failed jobs do not show a running ETA. The loss chart uses up to
+240 samples from the latest 256 KiB of the event journal; it is recent history,
+not the entire training curve. Logs retain at most 32 KiB in the UI. Presentation
+data refreshes with status polling, not on every frame. Reading the dashboard
+does not change worker state or query GPU utilization.
+
 `q` or Ctrl+C is **Detach**. `s` on the job dashboard is **Save checkpoint and stop**:
 it requests a committed update boundary, waits for the checkpoint's `COMPLETE`
 marker, then records stopped status. During non-training preparation, stop is

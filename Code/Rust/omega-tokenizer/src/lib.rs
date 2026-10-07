@@ -84,7 +84,7 @@ mod tests {
 
     fn tokenizer() -> Tokens {
         Tokens {
-            t: Tokenizer::from_bytes(include_bytes!("../../../../datasets/test.json"))
+            t: Tokenizer::from_bytes(include_bytes!("../../test-fixtures/wordlevel.json"))
                 .expect("valid test tokenizer"),
         }
     }

@@ -74,6 +74,24 @@ pub fn evaluate_source_on_device<
     set: &S,
     device: &B::Device,
 ) -> Result<EvaluationMetrics, String> {
+    evaluate_source_controlled_on_device(model, config, set, device, || Ok(()))
+}
+
+/// Cooperative evaluation over the same engine as the unbounded API. The
+/// callback runs before/after each source-validation and forward-pass example,
+/// and before returning metrics. An error discards partial aggregate metrics;
+/// an in-flight source read or forward pass always finishes before the check.
+pub fn evaluate_source_controlled_on_device<
+    S: ExampleSource,
+    B: burn::tensor::backend::Backend<FloatElem = f32>,
+>(
+    model: &Gpt<B>,
+    config: &GptConfig,
+    set: &S,
+    device: &B::Device,
+    mut check: impl FnMut() -> Result<(), String>,
+) -> Result<EvaluationMetrics, String> {
+    check()?;
     model.validate_config(config)?;
     if model.devices().iter().any(|current| current != device) {
         return Err("Evaluation model does not match the selected device".into());
@@ -83,6 +101,7 @@ pub fn evaluate_source_on_device<
     }
     let mut expected_targets = 0usize;
     for index in 0..set.example_count() {
+        check()?;
         let ids = set.example(index)?;
         if ids.len() < 2 || ids.len() - 1 > config.context_length {
             return Err(format!(
@@ -104,13 +123,16 @@ pub fn evaluate_source_on_device<
         expected_targets = expected_targets
             .checked_add(supervised)
             .ok_or("Evaluation target count overflows usize")?;
+        check()?;
     }
     if expected_targets != set.target_count()? {
         return Err("Evaluation source target count does not match its examples".into());
     }
+    check()?;
 
     let mut aggregate = LossAccumulator::default();
     for index in 0..set.example_count() {
+        check()?;
         let ids = set.example(index)?;
         let mask = checked_target_mask(set, index, ids.len())?;
         let inputs = token_tensor::<B>(
@@ -127,9 +149,12 @@ pub fn evaluate_source_on_device<
         aggregate
             .add_masked_logits(&logits, &ids[1..], config.vocab_size, mask.as_deref())
             .map_err(|e| format!("Evaluation example {index}: {e}"))?;
+        check()?;
     }
     debug_assert_eq!(aggregate.target_count, expected_targets);
-    aggregate.finish()
+    let metrics = aggregate.finish()?;
+    check()?;
+    Ok(metrics)
 }
 
 #[derive(Default)]
@@ -267,6 +292,69 @@ mod tests {
     }
 
     #[test]
+    fn controlled_evaluation_discards_partial_metrics_and_preserves_weights() {
+        struct ObservedSource {
+            reads: std::cell::Cell<usize>,
+            source: TrainingSet,
+        }
+        impl ExampleSource for ObservedSource {
+            fn example_count(&self) -> usize {
+                self.source.example_count()
+            }
+            fn target_count(&self) -> Result<usize, String> {
+                self.source.target_count()
+            }
+            fn example(&self, index: usize) -> Result<Vec<u32>, String> {
+                self.reads.set(self.reads.get() + 1);
+                self.source.example(index)
+            }
+            fn identity(&self) -> Result<String, String> {
+                self.source.identity()
+            }
+        }
+        let config = config();
+        let model = config.init::<Cpu>(&Default::default()).unwrap();
+        let before = logits(&model);
+        let source = ObservedSource {
+            reads: Default::default(),
+            source: set(vec![vec![0, 1], vec![2, 3]]),
+        };
+        let error = evaluate_source_controlled_on_device(
+            &model,
+            &config,
+            &source,
+            &Default::default(),
+            || {
+                // Two validation reads followed by the first model-evaluation read.
+                if source.reads.get() > source.example_count() {
+                    Err("stop after first evaluation example".into())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error, "stop after first evaluation example");
+        assert_eq!(
+            source.reads.get(),
+            3,
+            "No second forward example after stop"
+        );
+        assert_eq!(logits(&model), before);
+        let unbounded =
+            evaluate_source_on_device(&model, &config, &source, &Default::default()).unwrap();
+        let controlled = evaluate_source_controlled_on_device(
+            &model,
+            &config,
+            &source,
+            &Default::default(),
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(controlled, unbounded);
+    }
+
+    #[test]
     fn known_logits_and_targets_use_stable_cross_entropy_and_target_weighting() {
         let mut aggregate = LossAccumulator::default();
         // One easy target versus three uncertain targets: average by 4, not 2.
@@ -330,7 +418,7 @@ mod tests {
         .unwrap();
         fs::write(temp.path().join("text/two.txt"), "hello world").unwrap();
         let tokenizer = omega_tokenizer::Tokens::new(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
         )
         .unwrap();
         let corpus = load_document_corpus(temp.path(), &["text".into()], &tokenizer).unwrap();

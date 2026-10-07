@@ -1,5 +1,14 @@
 # Omega Training
 
+Post-training library APIs: `readiness` inspects parent/data without executing a
+model; `conversation_evaluation` runs versioned local suites and returns typed
+complete/partial reports; `operations::execute_segment_to` trains a bounded
+segment into an explicit output root; `execute_evaluation` adds cooperative
+metric cancellation/deadlines. `resume::read_stage_parent` and the separate
+weights-transfer initializer permit supported new stages across builds without
+weakening exact resume. Project sequencing, budgets, review and promotion live
+in Omega. See [the post-training guide](../../../Docs/post-training.md).
+
 The [Omega application](../../../Docs/omega.md) adds a persistent Linux terminal workspace, detached workers, whole-workflow projects and experimental CUDA. See OA01 in the task board for current validation. CUDA uses resume schemas 7/8; CPU/Vulkan formats are preserved.
 
 For a bounded training-time estimate before a run, see

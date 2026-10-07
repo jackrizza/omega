@@ -1,5 +1,310 @@
 # Omega implementation tasks
 
+## Post-training roadmap — 2026-10-07
+
+### Execution assignment — 2026-10-07
+
+User requested sub-agent execution of the prerequisites and post-training tasks.
+Coordinator owns integration/configuration/workflow/CLI/TUI, shared exports,
+manifests and documentation on `dev`. Existing staged changes and the active
+production run must be preserved. Production acceptance remains separate from
+software fixture evidence; ZH14 and AH01–AH04 remain deferred.
+
+First bounded wave (implemented; integration evidence below):
+- corpus: read-only ZH01–ZH05/ZH08/ZH09/FT01 data and artifact audit; no downloads,
+  production compute, credential output, mutations or acceptance claims.
+- training: FT02/FT07 training-library compatibility and segment outcome work;
+  exclusive writes to training `resume.rs`, `operations.rs`, `run_control.rs`
+  and new `tests/post_training_stage.rs`. Preserve existing staged edits.
+- protocol: FT04/FT05 suite/report engine; exclusive writes to new training
+  `src/conversation_evaluation.rs` and `tests/conversation_evaluation.rs`.
+- coordinator: agree interfaces, implement Omega configuration and workflow, and
+  integrate/test sequentially. No task is complete until acceptance checks pass.
+
+Second bounded wave (2026-10-07, implemented): corpus owns training `readiness.rs`,
+`tests/readiness.rs`, Omega `src/main.rs`, `tests/post_training.rs`, and
+`Docs/post-training-audit.md`; training additionally owns training `evaluation.rs`
+for cooperative metric deadlines; protocol owns Omega `src/tui.rs`,
+`src/tui/view.rs`, and `src/tui/tests.rs` for post-training actions. Coordinator
+owns `omega/src/post_training/`, configuration, jobs/pipeline wiring and shared
+documentation. API agreements: verified new-stage transfer is separate from exact
+resume; `execute_segment_to` writes to an explicit output root; evaluation reports
+distinguish completed checks from quality acceptance. Windows focused training
+tests passed initially (6 conversation, 8 readiness, 1 stage); final evidence is
+recorded below and in Docs/post-training-validation.md.
+
+FT01 is active for inventory/profile definition. Its real data, thresholds and
+budgets are not assumed accepted; independent software scaffolding/tests may
+proceed against explicit temporary fixtures while those inputs are resolved.
+
+Planning baseline preserved on `dev`; implementation evidence follows. See
+[the post-training roadmap](Docs/post-training-roadmap.md) for the approved
+workflow, compatibility decisions, resource boundaries and validation gates.
+FT02–FT10 now have implemented software and temporary-fixture evidence. Their
+production use remains gated by FT01; fixture inputs do not close its real
+experiment decisions. FT11 qualification and FT12 model acceptance are separate.
+The real pilot needs separately approved data/budgets. AH01–AH04 remain deferred.
+
+| ID | Task | Status | Dependencies | Owner |
+|---|---|---|---|---|
+| FT01 | Define the post-training experiment | blocked: real inputs | — | user/coordinator |
+| FT02 | Validate parent checkpoints and SFT data | software done | FT01 | coordinator/team |
+| FT03 | Add post-training configuration | software done | FT02 | coordinator/team |
+| FT04 | Implement conversational test suites | software done | FT02 | coordinator/team |
+| FT05 | Produce baseline and comparison reports | software done | FT04 | coordinator/team |
+| FT06 | Add human quality review | software done | FT05 | coordinator/team |
+| FT07 | Implement bounded train/evaluate segments | software done | FT03, FT05 | coordinator/team |
+| FT08 | Persist the automated workflow | software done | FT07 | coordinator/team |
+| FT09 | Integrate TUI and CLI | software done | FT06, FT08 | coordinator/team |
+| FT10 | Rank and promote candidates | software done | FT06, FT08 | coordinator/team |
+| FT11 | Qualify the implementation | partial: idle A770 pending | FT09, FT10 | coordinator |
+| FT12 | Run the real pilot and acceptance process | blocked | FT11; separately approved data/budgets | — |
+
+Reuse the implemented ZH06/ZH07 assistant path and ZH12 chat; do not reimplement
+them. FT01/FT04–FT06/FT08/FT10 extend ZH05. FT12 supplies execution evidence for
+ZH10, ZH11 and ZH13 without replacing those historical acceptance gates.
+Existing worker/checkpoint state and the current training run remain untouched.
+
+Before assigning code work, read the affected crate README, manifest, source and
+tests; record one owner and a bounded write set here. Model operations/evaluation
+stay in omega-training; workflow state, budgets and UI stay in Omega. Shared
+exports/manifests/CLI wiring and documentation remain coordinator-owned unless
+explicitly assigned. Each task requires focused tests and documentation; FT11
+owns integrated validation. No Python runtime dependency is introduced.
+
+### FT01 — Define the post-training experiment
+
+Status: blocked on actual parent/data/scope/budgets. Owner: user/coordinator. Dependencies: —.
+
+- [ ] Record parent identity, conversational scope, partitions, suite, human rubric, thresholds, and compute/storage limits. Separate software and quality acceptance.
+- [ ] Freeze actual parent/checkpoint identity, language/domain, response/context expectations, suite/rubric versions, required thresholds and resource limits; unresolved production inputs must stay explicit.
+- [x] Separate software regression acceptance from human-reviewed model quality. Do not approve a corpus, quality threshold or compute budget by substituting a toy fixture.
+
+### FT02 — Validate parent checkpoints and SFT data
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT01.
+
+- [x] Verify completeness, hashes, architecture, tokenizer/protocol, roles, assistant targets, context lengths, provenance and detectable overlap; return an actionable report without changing inputs.
+- [x] Check checkpoint payload/header agreement, frozen chat controls, source groups, held-out membership, detectable overlap, conversation ordering and context lengths; report detection limits and preserve inputs.
+- [x] Define and test a separate supported-format new-stage weights-transfer path across builds with fresh optimizer/sampler and preserved lineage. Keep exact-resume runtime/backend checks strict; reject unsupported parents without fallback.
+
+### FT03 — Add post-training configuration
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT02.
+
+- [x] Configure an existing parent, assistant-specific settings, segment size, evaluation cadence, budgets and outputs; freeze resolved settings without rerunning base training.
+- [x] Introduce project schema 2 with explicit comment-preserving migration and schema-1 reading; do not rewrite old job snapshots. Parent identity, assistant settings and paths must be resolved in the immutable launch snapshot.
+- [x] Remove unrelated base-data/base-training requirements for the new workflow. Validate update/time/evaluation/storage limits and stage-specific settings before launch; preserve the existing standalone command behaviour.
+
+### FT04 — Implement conversational test suites
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT02.
+
+- [x] Version single/multi-turn cases with fixed generation settings, expected-answer/JSON checks, termination, role leakage, empty output, repetition and context-limit checks; preserve outputs and failures.
+- [x] Expose typed versioned suites and case results in omega-training. Preserve prompts, generated replies, generation settings, completion reasons and individual check failures, including multi-turn history.
+- [x] Test expected-answer and JSON checks, reply termination, role leakage, empty/repetitive output, context overflow, timeouts and malformed cases. Do not equate deterministic checks with semantic correctness.
+
+### FT05 — Produce baseline and comparison reports
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT04.
+
+- [x] Measure assistant validation loss, base-language regression and conversation results; compare compatible configurations with full artifact/runtime identity; export JSON and Markdown.
+- [x] Expose typed reports with checkpoint/data/tokenizer/protocol/suite/runtime identity, target counts, metrics, outputs, timings and completion state. Reject incompatible comparisons and preserve partial reports.
+- [x] Retain a fixed-parent baseline, assistant development results and a separate base-language regression measurement. Export JSON plus readable Markdown; never use sealed-test results to drive automatic tuning.
+
+### FT06 — Add human quality review
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT05.
+
+- [x] Score instruction-following, correctness, relevance and coherence against a versioned rubric; retain notes and responses; missing review remains pending.
+- [x] Tie scores/notes and rubric version to exact saved responses/report hashes. Changed output, suite or rubric cannot silently reuse an old review.
+- [x] Test score validation, missing/partial review and persistence. Required missing scores leave candidates pending; the model must not grade or approve itself.
+
+### FT07 — Implement bounded train/evaluate segments
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT03, FT05.
+
+- [x] Initialize SFT once, resume the same stage between segments, verify saves before evaluation, and distinguish segment completion, budget exhaustion, user stop and failure.
+- [x] Add typed outcomes distinguishing segment completion, total budget exhaustion, user interruption and failure. Start fresh SFT once, then restore the same optimizer/data/settings for every continuation.
+- [x] Verify a complete save before evaluation; account for training/evaluation time and output capacity with safe-save headroom. Cooperative limits may finish the current operation/save and must report overruns; do not delete artifacts.
+
+### FT08 — Persist the automated workflow
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT07.
+
+- [x] Sequence baseline, training and evaluation under one compute lock; journal transitions and reports; recover without duplicate work or false passing results.
+- [x] Journal phase transitions, consumed budgets and verified checkpoint/report references under the existing detached-worker and host compute-lock model. Execute training and evaluation sequentially with one approved configuration.
+- [x] Test crash recovery at every phase, duplicate prevention, missing/changed artifacts, unavailable storage and failed evaluation. User stop cancels remaining stages; reconnect does not restart work; reboot recovery remains explicit.
+
+### FT09 — Integrate TUI and CLI
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT06, FT08.
+
+- [x] Expose parent selection, readiness, review, progress, results, comparisons and human scoring through shared Rust APIs in the single binary.
+- [x] Expose one shared implementation through functional TUI screens and headless operations: parent/readiness/configuration review, workflow progress, retained reports, candidate comparisons and human review.
+- [x] Test configuration round trips, errors/nonzero exits, navigation/resizing, detach and reconnect. Keep worker completion, quality status and human approval visibly distinct.
+
+### FT10 — Rank and promote candidates
+
+Status: software done; real experiment acceptance remains gated by FT01. Owner: coordinator/team. Dependencies: FT06, FT08.
+
+- [x] Filter failed/pending candidates, rank eligible checkpoints by validation assistant loss then fewer updates, and record human-approved selection with immutable hashes/evidence.
+- [x] Apply required gates first; incomplete reports or required missing human scores remain pending. Rank eligible candidates by lower validation assistant loss, then fewer updates; display other metrics separately.
+- [x] Require explicit human approval to create an immutable selection manifest with checkpoint/report/review hashes. Refuse overwrite, never mutate checkpoints and never infer best from latest. Final sealed-test acceptance is a separate state.
+
+### FT11 — Qualify the implementation
+
+Status: partial; CPU and tiny WSL CUDA qualified, idle A770 qualification pending. Owner: coordinator. Dependencies: FT09, FT10.
+
+- [ ] Pass offline end-to-end, persistence, compatibility, failure and backend tests, including parent preservation and exact SFT continuation.
+- [x] Run tiny offline end-to-end and failure tests: parent preservation, fresh-stage state, compatible transfer, unchanged exact-resume rejection, masked loss, segmented equivalence, budgets, partial reports and human review.
+- [x] Run Linux subprocess/PTY detach, kill, hangup, reconnect, stop and phase-recovery tests. Run workspace formatting/tests/strict Clippy and relevant feature builds, recording fresh results.
+- [ ] Qualify bounded Vulkan fixtures on an idle A770 and CUDA fixtures on available WSL hardware; report hardware evidence separately. No production-run interruption or infrastructure rental is authorized.
+
+### FT12 — Run the real pilot and acceptance process
+
+Status: blocked. Owner: unassigned. Dependencies: FT11; separately approved data/budgets.
+
+- [ ] Compare a bounded real pilot with its base, review responses, select a candidate, then perform final sealed-test acceptance and local model packaging.
+- [ ] Obtain separate approval of real data, frozen experiment thresholds and pilot/storage budgets. Run a bounded SFT pilot against its base; retain failed gates and human scores as well as successes.
+- [ ] Continue only the accepted configuration within budget. Explicitly select/promote a candidate, run sealed-test acceptance separately, and record failures honestly.
+- [ ] Produce the model card, exact artifact identities, reports and reproducible local-use/recovery instructions. Supply evidence to ZH10/ZH11/ZH13; no public upload or deletion follows from task completion.
+
+### Implementation evidence — 2026-10-07
+
+FT02–FT10 software is implemented in the training readiness/evaluation/transfer
+APIs and Omega post_training/configuration/worker/TUI/CLI integration. Three
+sub-agents supplied disjoint modules, tests and audits; coordinator integrated
+and reviewed them. Fresh evidence: Windows and Linux CPU workspace tests pass;
+final readiness 13/13 and workflow 8/8 pass on both. Formatting and strict
+workspace/all-target CPU/Vulkan/CUDA Clippy pass; Linux CPU/all-backend builds
+pass. The new Linux subprocess/PTY suite passes baseline/training/evaluation
+crashes, detach/reconnect, compute exclusion, verified stop, retained-executable
+recovery, frozen-input rejection and conservative budget reservations. Tiny WSL
+CUDA post-training passes in 92.4 seconds (schema 8, two SFT segments, full reports,
+unchanged parent). See [full validation](Docs/post-training-validation.md) for
+commands, test limits and initial test-harness corrections.
+
+FT01 remains blocked on actual parent/data/scope/rubric/thresholds and budgets;
+FT12 remains blocked on those approvals and FT11. The local audit found empty
+conversation partitions, unresolved permitted use, no matching local parent,
+and blank pilot budget fields. These are not replaced by fixture data. Earlier
+ZH01–ZH05/ZH08–ZH11/ZH13 acceptance boxes retain their historical status. FT11's
+remaining hardware gate is the new workflow on an idle A770; the current remote
+run was not interrupted. The discovered 33 MiB legacy tokenizer preparation
+receipt versus 8 MiB job-reader limit is recorded in the audit; that unrelated
+base-preparation defect was not silently fixed or counted as accepted evidence.
+No production training, downloads, publication, commits or pushes occurred.
+
+### Deferred helper tasks
+
+The initial helper authority is **propose, then approve**. It uses structured
+reports/actions and does not replace deterministic validation or resource limits.
+All helper tasks remain unchecked until the post-training implementation is
+qualified and the future work is explicitly assigned.
+
+### AH01 — Define the helper action interface
+
+Status: deferred. Owner: unassigned. Dependencies: FT11; explicit future assignment.
+
+- [ ] Define structured project summaries, readiness/report inputs and allowed proposals. Route actions through deterministic validation and the existing approval screen; no arbitrary shell execution.
+
+### AH02 — Prepare the Omega helper corpus
+
+Status: deferred. Owner: unassigned. Dependencies: AH01.
+
+- [ ] Curate Omega documentation, troubleshooting examples and explicitly approved workflow examples. Remove credentials/private content, keep evaluation cases separate and do not automatically use user conversations as training data.
+
+### AH03 — Train and evaluate a separate tiny helper
+
+Status: deferred. Owner: unassigned. Dependencies: AH02; approved data/budgets.
+
+- [ ] Train and evaluate the separate tiny helper for explanation and valid next-step proposals. Measure memory, latency, factual accuracy, action validity and abstention. Concurrent assistance requires separate resource qualification.
+
+### AH04 — Integrate proposal-and-approval assistance
+
+Status: deferred. Owner: unassigned. Dependencies: AH03.
+
+- [ ] Integrate contextual help across configuration, data, training, evaluation and recovery. Show proposed changes, reasons and resource impact before approval. Keep every workflow usable without the helper.
+
+### Initial planning validation and scope (historical)
+
+Documentation-only changes: created the roadmap/task entries and refreshed
+zero-to-hero's implemented/missing distinctions against current source. No FT/AH
+implementation, training, download, release, commit or push was performed.
+Validation passed: 19 local links/anchors, balanced Markdown fences, 16 unique
+unchecked tasks with consistent acyclic dependencies, preserved prior staged
+task history, and Git whitespace checks. No Cargo or hardware tests were run for
+this documentation-only change. These checks do not establish future software
+or model acceptance. LoRA, preference optimization, autonomous tuning, external
+model judges and ZH14 remain excluded.
+
+
+## UI01 — Pane-based terminal workspace — 2026-10-07
+
+Status: done; uncommitted. Owner: coordinator. Branch: `dev`.
+Scope: Omega TUI rendering, navigation and bounded dashboard presentation; focused
+render/control tests and application documentation. Use the openapi-tui demo as
+visual inspiration for a persistent sidebar, labelled panes and selection colours.
+Keep worker APIs, checkpoint formats and running executables unchanged. Preserve
+the staged RP02 changes. Acceptance: readable metrics and durations, recent loss
+history, separate log/checkpoint/result views, responsive layout, existing launch
+and detach controls, package/workspace checks and Linux persistence regression.
+
+Implemented in `Code/Rust/omega/src/tui.rs` and its new `view.rs`, `dashboard.rs`
+and `tests.rs` submodules. Added navigation shortcuts, project/form detail panes,
+four job views, formatted metrics/durations, recent-loss chart, bounded log
+following/history and checkpoint paths. Rendering performs no dashboard file
+reads; polling reads bounded tails and caches the checkpoint index by metadata.
+Worker controls and schemas are unchanged. Updated the crate README, application
+guide and implementation status. `Docs/images/omega-dashboard.png` is an export
+of the actual Ratatui TestBackend with test data. The PTY test now opens the
+reconnected worker monitor and switches views; its RP02 fixture change remains.
+
+Validation: 280 Linux CPU workspace tests passed. After final editor/chart-label
+adjustments, all 10 Omega tests passed again. All four new UI tests also passed
+on Windows. Strict workspace/all-target Clippy with CPU/Vulkan/CUDA features
+passed; strict all-feature Omega Clippy passed again after final adjustments.
+Formatting, Git whitespace and documentation-link checks passed. Inspected the
+140x44 render; tests also exercise every screen/dialog at 80x24, 24x8, 8x4 and 1x1,
+unknown metrics, log scrolling, stage changes and partial event records.
+
+The final Linux PTY suite passed detach, abrupt TUI kill, terminal hangup,
+reconnect/view switching without duplicate workers, competing-launch rejection,
+checkpoint-and-stop, retained-executable resume, worker death/failure, stale
+process identity and terminal restoration checks. Only temporary CPU projects
+were used. An initial invalid test job ID was corrected before the passing runs.
+
+No production worker or installed executable was replaced; no GPU training,
+release, commit or push was performed. Rebuild Omega to use the new interface,
+then reconnect through Jobs. Existing jobs retain their original worker binary.
+
+
+## RP02 — Keep local datasets and weights out of Git — 2026-10-05
+
+Status: done; changes staged, not committed. Owner: coordinator. Removed
+`datasets/omega-alpha/model.toml`, `datasets/test.json` and `weights/.gitkeep`
+from the index. Ignore rules exclude all of datasets/omega-alpha and both
+weights/Weights directory spellings, with no recipe or marker-file exceptions.
+Local originals remain byte-identical; existing checkpoint files were untouched.
+The user's existing first commit was not amended or rewritten.
+
+The unchanged 13-entry tokenizer fixture now lives at
+`Code/Rust/test-fixtures/wordlevel.json`. Rust unit/integration tests, the CPU
+source probe and the Linux PTY test use that location. The NN CLI tests explicitly
+select the fixture rather than relying on ignored local data. CLI runtime paths
+and token IDs are unchanged. Updated fixture/contribution guides and local-only
+recipe/checkpoint documentation describe the new Git boundary.
+
+Validation: a clean index export excludes every requested path and passes all
+276 Linux CPU workspace tests and formatting. Strict all-target Clippy with both
+Vulkan/CUDA features passed on Windows. Index/ignore assertions, original-file
+hash comparisons and documentation link checks passed. An initial clean-export
+failure exposed the NN CLI test's implicit default path; that dependency was
+fixed before the successful full run. No production training or release rebuild
+was needed for this fixture/path-only change.
+
+
 ## RP01 — Initial Git push and main release builds — 2026-10-05
 
 Status: done. Owner: coordinator. The initial file set is staged: 140 source,

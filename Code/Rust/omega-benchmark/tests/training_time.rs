@@ -18,7 +18,7 @@ fn fixture() -> (tempfile::TempDir, TrainingTimeConfig) {
     fs::create_dir(temp.path().join("corpus")).unwrap();
     fs::write(
         temp.path().join("tokenizer.json"),
-        include_bytes!("../../../../datasets/test.json"),
+        include_bytes!("../../test-fixtures/wordlevel.json"),
     )
     .unwrap();
     // 3 examples: lengths 4, 2, 1 input positions; 7 total targets, no cross-file pair.

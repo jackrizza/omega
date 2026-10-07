@@ -6,6 +6,7 @@ use crate::{ExampleSource, TrainingSession, UpdateEvent};
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,6 +39,28 @@ pub struct RunOutcome {
     pub checkpoint: PathBuf,
 }
 
+pub(crate) struct SegmentBudget {
+    pub started: Instant,
+    pub max_seconds: f64,
+}
+
+impl SegmentBudget {
+    pub fn new(max_seconds: f64) -> Result<Self, String> {
+        if !max_seconds.is_finite() || max_seconds <= 0.0 {
+            return Err("Segment time budget must be finite and greater than zero".into());
+        }
+        Ok(Self {
+            started: Instant::now(),
+            max_seconds,
+        })
+    }
+}
+
+pub(crate) struct BoundedRunOutcome {
+    pub run: RunOutcome,
+    pub time_budget_reached: bool,
+}
+
 /// Advance at most `updates`, save at cumulative update/epoch intervals and once
 /// at the final boundary. Coincident intervals/final/stop boundaries save once.
 /// A stop already requested saves the current (possibly zero-update) state.
@@ -51,28 +74,62 @@ pub fn advance_controlled<
     updates: usize,
     stop: &AtomicBool,
     schedule: SaveSchedule,
+    observe: impl FnMut(&TrainingSession<S, B>, &UpdateEvent) -> Result<(), String>,
+    save: impl FnMut(&TrainingSession<S, B>) -> Result<PathBuf, String>,
+) -> Result<RunOutcome, String> {
+    Ok(advance_bounded(session, updates, stop, schedule, None, observe, save)?.run)
+}
+
+/// Cooperative budget checks reserve initial save headroom (10%, capped at 5s),
+/// then use the longest observed update/observer and save durations. This is an
+/// estimate, not a hard timeout: an in-flight update or save always finishes.
+pub(crate) fn advance_bounded<
+    S: ExampleSource,
+    B: burn::tensor::backend::AutodiffBackend<FloatElem = f32>,
+>(
+    session: &mut TrainingSession<S, B>,
+    updates: usize,
+    stop: &AtomicBool,
+    schedule: SaveSchedule,
+    budget: Option<&SegmentBudget>,
     mut observe: impl FnMut(&TrainingSession<S, B>, &UpdateEvent) -> Result<(), String>,
     mut save: impl FnMut(&TrainingSession<S, B>) -> Result<PathBuf, String>,
-) -> Result<RunOutcome, String> {
+) -> Result<BoundedRunOutcome, String> {
     schedule.validate()?;
     let mut last_save = None;
+    let mut save_seconds = budget.map_or(0.0, |b| (b.max_seconds * 0.1).min(5.0));
+    let mut update_seconds = 0.0_f64;
+    let mut time_budget_reached = false;
     for _ in 0..updates {
         if stop.load(Ordering::SeqCst) {
             break;
         }
+        if budget.is_some_and(|b| {
+            b.started.elapsed().as_secs_f64() + save_seconds + update_seconds >= b.max_seconds
+        }) {
+            time_budget_reached = true;
+            break;
+        }
+        let update_started = Instant::now();
         let event = session.step()?;
         observe(session, &event)?;
+        update_seconds = update_seconds.max(update_started.elapsed().as_secs_f64());
         if schedule.due(&event) {
+            let save_started = Instant::now();
             last_save = Some((event.completed_updates, save(session)?));
+            save_seconds = save_seconds.max(save_started.elapsed().as_secs_f64());
         }
     }
     let checkpoint = match last_save {
         Some((update, path)) if update == session.progress().completed_updates => path,
         _ => save(session)?,
     };
-    Ok(RunOutcome {
-        interrupted: stop.load(Ordering::SeqCst),
-        checkpoint,
+    Ok(BoundedRunOutcome {
+        run: RunOutcome {
+            interrupted: stop.load(Ordering::SeqCst),
+            checkpoint,
+        },
+        time_budget_reached,
     })
 }
 
@@ -104,6 +161,35 @@ mod tests {
             42,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn expired_budget_saves_boundary_without_turning_it_into_user_stop() {
+        let mut session = make_session();
+        let stop = AtomicBool::new(false);
+        let budget = SegmentBudget {
+            started: Instant::now() - std::time::Duration::from_secs(1),
+            max_seconds: 0.5,
+        };
+        let mut saves = 0;
+        let outcome = advance_bounded(
+            &mut session,
+            2,
+            &stop,
+            SaveSchedule::default(),
+            Some(&budget),
+            |_, _| panic!("Expired segment must not begin an update"),
+            |current| {
+                assert_eq!(current.progress().completed_updates, 0);
+                saves += 1;
+                Ok(PathBuf::from("verified-by-caller"))
+            },
+        )
+        .unwrap();
+        assert!(outcome.time_budget_reached);
+        assert!(!outcome.run.interrupted);
+        assert!(!stop.load(Ordering::SeqCst));
+        assert_eq!(saves, 1);
     }
 
     #[test]
@@ -168,7 +254,7 @@ mod tests {
     fn requested_stop_saves_exact_boundary_and_disk_resume_matches_continuation() {
         let temp = tempfile::tempdir().unwrap();
         let tokenizer = Tokens::new(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
         )
         .unwrap();
         let mut expected = make_session();

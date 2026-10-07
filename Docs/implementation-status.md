@@ -1,6 +1,30 @@
 # Omega implementation status and remaining work
 
+## Post-training implementation — 2026-10-07
+
+Omega now has schema-2 post-training configuration, read-only parent/data
+readiness, versioned conversational suites, baseline/candidate loss reports,
+bounded SFT segments, persisted recovery, human scoring and explicit promotion.
+Training mechanics remain in `omega-training`; Omega owns budgets and sequencing.
+New-stage transfer supports resumable schemas 3–8 across builds, while exact
+resume retains strict runtime/backend checks. See [the usage guide](post-training.md)
+and FT01–FT12 in [TASKS.md](../TASKS.md) for current evidence and remaining gates.
+The production dataset/parent/budgets and actual model-quality acceptance are
+unresolved; temporary software fixtures do not satisfy them. The active remote
+base run was not interrupted or replaced.
+
 The [Omega application](omega.md) adds a persistent Linux terminal workspace, detached workers, whole-workflow projects and experimental CUDA. See OA01 in the task board for current validation. CUDA uses resume schemas 7/8; CPU/Vulkan formats are preserved.
+
+## Terminal workspace redesign — 2026-10-07
+
+UI01 replaces the monolithic job text dump with a responsive pane layout,
+navigation sidebar, formatted training metrics and a recent-loss chart. Separate
+views expose log history, checkpoint paths and worker results. Forms show current
+values, and the TOML editor scrolls horizontally without wrapping source lines.
+Dashboard data is read in bounded batches during polling rather than rendering.
+Worker controls, job/checkpoint schemas and exact-resume mechanics are unchanged.
+See [the application guide](omega.md) for controls, a sample-data preview and
+history/ETA limits, and UI01 in [TASKS.md](../TASKS.md) for validation evidence.
 
 ## Dataset training-time estimates — 2026-10-05
 
@@ -218,7 +242,8 @@ exact state bits. T08 adds ctrlc 3.5 with termination handling and its target-sp
 dependencies; existing versions and Burn/backends are unchanged. A lockfile fixes dependencies, not cross-platform
 floating-point results. Only load trusted compatible checkpoints.
 
-Default `datasets/test.json` is the preserved WordLevel fixture. The empty
+The preserved WordLevel fixture is `Code/Rust/test-fixtures/wordlevel.json`.
+`datasets/test.json`, `datasets/omega-alpha/` and weights are local-only. The empty
 crate-local tokenizer JSON is an unused placeholder retained as existing data.
 User corpora and checkpoint files must not be overwritten. This checkout lacks
 Git metadata; coordinator snapshots outside the repository allow change review.

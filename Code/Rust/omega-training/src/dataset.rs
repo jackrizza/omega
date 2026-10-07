@@ -744,7 +744,7 @@ mod tests {
 
     fn tokenizer() -> omega_tokenizer::Tokens {
         omega_tokenizer::Tokens::new(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
         )
         .expect("load fixture tokenizer")
     }

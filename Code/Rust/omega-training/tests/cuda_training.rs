@@ -36,7 +36,7 @@ fn base_resume_and_rejected_update_preserve_cuda_state() {
         d_ff: 8,
     };
     let tokens = omega_tokenizer::Tokens::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
     )
     .unwrap();
     let source = || TrainingSet {
@@ -158,7 +158,7 @@ fn assistant_batches_evaluate_and_resume_exactly_on_selected_gpu() {
         d_ff: 8,
     };
     let tokenizer = omega_tokenizer::Tokens::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"),
     )
     .unwrap();
     let root = tempfile::tempdir().unwrap();

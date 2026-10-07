@@ -55,7 +55,7 @@ fn ordinary_default_and_fixture_remain_unchanged() {
     assert!(ChatProtocol::from_tokenizer(&plain).is_err());
     let fixture = Tokens::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../datasets/test.json"
+        "/../test-fixtures/wordlevel.json"
     ))
     .unwrap();
     assert_eq!(fixture.vocab_size(), 13);

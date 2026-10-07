@@ -20,6 +20,34 @@ impl OperationControl {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStopReason {
+    Completed,
+    SegmentLimit,
+    UserStop,
+    TimeBudget,
+}
+
+/// A successful bounded invocation always names a verified completed checkpoint.
+/// Counts are cumulative within the stage. Time includes loading and final save;
+/// budget overruns are reported because committed updates cannot be interrupted.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct OperationOutcome {
+    pub reason: OperationStopReason,
+    pub checkpoint: std::path::PathBuf,
+    pub completed_updates: usize,
+    pub total_updates: usize,
+    pub elapsed_seconds: f64,
+    pub budget_overrun_seconds: f64,
+}
+
+struct SegmentExecution {
+    budget: SegmentBudget,
+    output_root: Option<PathBuf>,
+    outcome: std::cell::RefCell<Option<OperationOutcome>>,
+}
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
@@ -44,12 +72,12 @@ use crate::checkpoint_catalog::{CatalogLimits, CatalogMode, discover_checkpoints
 use crate::dataset::{
     DatasetFormat, ExampleSource, load_document_corpus_with_format, load_text_documents,
 };
-use crate::evaluation::evaluate_source_on_device;
+use crate::evaluation::{evaluate_source_controlled_on_device, evaluate_source_on_device};
 use crate::optimization::OptimizationOptions;
 use crate::resume::{
     ParentCheckpoint, load_training_checkpoint, save_training_checkpoint_with_parent,
 };
-use crate::run_control::{SaveSchedule, advance_controlled};
+use crate::run_control::{SaveSchedule, SegmentBudget, advance_bounded};
 use crate::sampling::{SamplingGroup, SamplingPolicy};
 use crate::trainer::SessionOptions;
 use crate::{
@@ -831,6 +859,7 @@ fn session_options(
 
 struct RunOutput<'a> {
     control: Option<&'a OperationControl>,
+    segment: Option<&'a SegmentExecution>,
     parent: Option<&'a ParentCheckpoint>,
     weights_root: &'a Path,
     name: &'a str,
@@ -977,6 +1006,13 @@ fn run_session<R: Runtime>(
     output: RunOutput<'_>,
     runtime: &R,
 ) -> Result<(), String> {
+    let mut output = output;
+    if let Some(root) = output
+        .segment
+        .and_then(|segment| segment.output_root.as_deref())
+    {
+        output.weights_root = root;
+    }
     let schedule = SaveSchedule::from(output.saves.clone());
     schedule.validate()?;
     let total = output
@@ -1034,11 +1070,12 @@ fn run_session<R: Runtime>(
     let timer = std::time::Instant::now();
     let starting_updates = session.progress().completed_updates;
     let starting_targets = session.progress().completed_targets;
-    let outcome = advance_controlled(
+    let bounded = advance_bounded(
         &mut session,
         updates,
         &stop,
         schedule,
+        output.segment.map(|segment| &segment.budget),
         |current, event| {
             if let Some(control) = output.control {
                 control.emit("update", serde_json::json!({"epoch":event.epoch,"completed_updates":event.completed_updates,"completed_targets":event.completed_targets,"loss":event.pre_update_loss,"gradient_norm":event.gradient_norm,"learning_rate":event.effective_learning_rate,"elapsed_seconds":timer.elapsed().as_secs_f64(),"run_updates":event.completed_updates.saturating_sub(starting_updates),"run_targets":event.completed_targets.saturating_sub(starting_targets)}))?;
@@ -1082,6 +1119,32 @@ fn run_session<R: Runtime>(
         },
         |current| {
             let checkpoint = runtime.save(current, &output)?;
+            if output.segment.is_some() {
+                // Do not report a worker checkpoint until its saved state and
+                // payload hashes agree with the committed in-memory boundary.
+                let saved = crate::resume::read_resume_manifest(&checkpoint)?;
+                crate::checkpoint::load_checkpoint_header(&checkpoint)?;
+                if saved.progress != current.progress()
+                    || saved.parent.as_ref() != output.parent
+                    || saved.source_identity != current.training_set().identity()?
+                    || saved.objective() != current.training_set().objective()
+                {
+                    return Err(
+                        "Saved segment checkpoint state disagrees with committed training state"
+                            .into(),
+                    );
+                }
+                for (name, digest) in [
+                    ("model.mpk", &saved.model_sha256),
+                    ("optimizer.mpk", &saved.optimizer_sha256),
+                ] {
+                    let bytes = std::fs::read(checkpoint.join(name))
+                        .map_err(|e| format!("Cannot verify saved {name}: {e}"))?;
+                    if sha256_bytes(&bytes) != *digest {
+                        return Err(format!("Saved segment {name} checksum mismatch"));
+                    }
+                }
+            }
             if let Some(control) = output.control {
                 control.emit("checkpoint", serde_json::json!({"path":checkpoint}))?;
             }
@@ -1089,6 +1152,7 @@ fn run_session<R: Runtime>(
             Ok(checkpoint)
         },
     )?;
+    let outcome = bounded.run;
     if let Some(writer) = &mut metrics {
         if outcome.interrupted && session.progress().completed_updates < total {
             writer.interrupted(session.progress())?;
@@ -1100,6 +1164,28 @@ fn run_session<R: Runtime>(
     }
     if let Some(control) = output.control {
         control.emit("training_finished",serde_json::json!({"completed_updates":session.progress().completed_updates,"total_updates":total,"segment_only":session.progress().completed_updates < total}))?;
+    }
+    if let Some(segment) = output.segment {
+        let completed_updates = session.progress().completed_updates;
+        let reason = if completed_updates == total {
+            OperationStopReason::Completed
+        } else if outcome.interrupted {
+            OperationStopReason::UserStop
+        } else if bounded.time_budget_reached {
+            OperationStopReason::TimeBudget
+        } else {
+            OperationStopReason::SegmentLimit
+        };
+        let elapsed_seconds = segment.budget.started.elapsed().as_secs_f64();
+        *segment.outcome.borrow_mut() = Some(OperationOutcome {
+            reason,
+            checkpoint: outcome.checkpoint,
+            completed_updates,
+            total_updates: total,
+            elapsed_seconds,
+            budget_overrun_seconds: (elapsed_seconds - segment.budget.max_seconds).max(0.0),
+        });
+        return Ok(());
     }
     if outcome.interrupted && session.progress().completed_updates < total {
         return Err(format!(
@@ -1192,6 +1278,106 @@ fn run_checkpoint_command(command: CheckpointCommand) -> Result<(), String> {
 }
 
 pub fn execute(args: Args, control: Option<&OperationControl>) -> Result<(), String> {
+    execute_internal(args, control, None)
+}
+
+/// Execute one bounded assistant-stage or exact-resume segment. TrainStage
+/// explicitly transfers supported Omega weights across builds; Resume retains
+/// all exact runtime/backend/source checks. The caller's stop flag is user-only.
+/// CPU pools must already be configured by the caller, as with `execute`.
+pub fn execute_segment(
+    args: Args,
+    control: &OperationControl,
+    max_seconds: f64,
+) -> Result<OperationOutcome, String> {
+    execute_segment_inner(args, control, max_seconds, None)
+}
+
+/// As `execute_segment`, with a separate destination for newly saved checkpoints.
+/// Parent/resume selection still uses `Args`' weights root. Relative destinations
+/// resolve from the caller's working directory; existing saves are never replaced.
+pub fn execute_segment_to(
+    args: Args,
+    control: &OperationControl,
+    max_seconds: f64,
+    output_root: &Path,
+) -> Result<OperationOutcome, String> {
+    if output_root.as_os_str().is_empty() {
+        return Err("Segment output directory must not be empty".into());
+    }
+    execute_segment_inner(args, control, max_seconds, Some(output_root.to_owned()))
+}
+
+fn execute_segment_inner(
+    args: Args,
+    control: &OperationControl,
+    max_seconds: f64,
+    output_root: Option<PathBuf>,
+) -> Result<OperationOutcome, String> {
+    if !matches!(
+        args.command,
+        Command::TrainStage { .. } | Command::Resume { .. }
+    ) {
+        return Err("Segment execution requires train-stage or resume".into());
+    }
+    let segment = SegmentExecution {
+        budget: SegmentBudget::new(max_seconds)?,
+        output_root,
+        outcome: Default::default(),
+    };
+    execute_internal(args, Some(control), Some(&segment))?;
+    segment
+        .outcome
+        .into_inner()
+        .ok_or_else(|| "Segment completed without a verified training outcome".into())
+}
+
+fn check_evaluation_control(
+    control: Option<&OperationControl>,
+    budget: Option<&SegmentBudget>,
+) -> Result<(), String> {
+    if control.is_some_and(|c| c.stop.load(Ordering::SeqCst)) {
+        return Err("Evaluation stopped by user; no completed evaluation result".into());
+    }
+    if let Some(budget) = budget
+        && budget.started.elapsed().as_secs_f64() >= budget.max_seconds
+    {
+        return Err(format!(
+            "Evaluation time budget exhausted after {:.3}s (budget {:.3}s); no completed evaluation result",
+            budget.started.elapsed().as_secs_f64(),
+            budget.max_seconds
+        ));
+    }
+    Ok(())
+}
+
+/// Evaluate fixed weights with cooperative checks before/after every example.
+/// Loading, serialization and observer dispatch count toward the budget. No
+/// partial aggregate is emitted; a dispatch that itself overruns is an error,
+/// so callers must accept results only when this operation returns success.
+pub fn execute_evaluation(
+    args: Args,
+    control: &OperationControl,
+    max_seconds: f64,
+) -> Result<(), String> {
+    if !matches!(args.command, Command::Evaluate { .. }) {
+        return Err("Bounded evaluation requires evaluate".into());
+    }
+    let execution = SegmentExecution {
+        budget: SegmentBudget::new(max_seconds)?,
+        output_root: None,
+        outcome: Default::default(),
+    };
+    check_evaluation_control(Some(control), Some(&execution.budget))?;
+    execute_internal(args, Some(control), Some(&execution))?;
+    check_evaluation_control(Some(control), Some(&execution.budget))
+}
+
+fn execute_internal(
+    args: Args,
+    control: Option<&OperationControl>,
+    segment: Option<&SegmentExecution>,
+) -> Result<(), String> {
     if matches!(args.command, Command::Devices) && args.backend == BackendChoice::Cuda {
         if args.device.is_some()
             || args.cpu.cpu_threads.is_some()
@@ -1232,7 +1418,7 @@ pub fn execute(args: Args, control: Option<&OperationControl>) -> Result<(), Str
             if args.device.is_some() {
                 return Err("--device requires --backend vulkan or cuda".into());
             }
-            run_on_backend(args, &CpuRuntime(Default::default()), control)
+            run_on_backend(args, &CpuRuntime(Default::default()), control, segment)
         }
         BackendChoice::Cuda => {
             if !matches!(
@@ -1254,7 +1440,7 @@ pub fn execute(args: Args, control: Option<&OperationControl>) -> Result<(), Str
             #[cfg(feature = "cuda")]
             {
                 let runtime = crate::cuda::initialize(args.device.unwrap_or(0))?;
-                run_on_backend(args, &runtime, control)
+                run_on_backend(args, &runtime, control, segment)
             }
             #[cfg(not(feature = "cuda"))]
             {
@@ -1287,7 +1473,7 @@ pub fn execute(args: Args, control: Option<&OperationControl>) -> Result<(), Str
                     runtime.adapter().name,
                     runtime.adapter().driver_info
                 );
-                run_on_backend(args, &runtime, control)
+                run_on_backend(args, &runtime, control, segment)
             }
             #[cfg(not(feature = "gpu"))]
             Err("Vulkan support is not enabled; rebuild omega-training with --features gpu".into())
@@ -1299,6 +1485,7 @@ fn run_on_backend<R: Runtime>(
     args: Args,
     runtime: &R,
     control: Option<&OperationControl>,
+    segment: Option<&SegmentExecution>,
 ) -> Result<(), String> {
     match args.command {
         Command::Devices => unreachable!("device discovery is handled before model dispatch"),
@@ -1352,20 +1539,25 @@ fn run_on_backend<R: Runtime>(
             if epochs == 0 {
                 return Err("epochs must be greater than zero".into());
             }
-            let (session, tokenizer, parent) =
-                crate::resume::initialize_assistant_stage_on_device::<_, R::Training>(
-                    &path,
-                    data.training,
-                    learning_rate,
-                    seed,
-                    options,
-                    runtime.device(),
-                )?;
+            let initialize = if segment.is_some() {
+                crate::resume::initialize_assistant_stage_transfer_on_device::<_, R::Training>
+            } else {
+                crate::resume::initialize_assistant_stage_on_device::<_, R::Training>
+            };
+            let (session, tokenizer, parent) = initialize(
+                &path,
+                data.training,
+                learning_rate,
+                seed,
+                options,
+                runtime.device(),
+            )?;
             run_session(
                 session,
                 data.validation,
                 RunOutput {
                     control,
+                    segment,
                     parent: Some(&parent),
                     weights_root: &weights_root,
                     name: &name,
@@ -1602,6 +1794,7 @@ fn run_on_backend<R: Runtime>(
                 data.validation,
                 RunOutput {
                     control,
+                    segment,
                     parent: None,
                     weights_root: &weights_root,
                     name: &name,
@@ -1680,6 +1873,7 @@ fn run_on_backend<R: Runtime>(
                 data.validation,
                 RunOutput {
                     control,
+                    segment,
                     parent: parent.as_ref(),
                     weights_root: &weights_root,
                     name: &name,
@@ -1778,6 +1972,7 @@ fn run_on_backend<R: Runtime>(
             validation_count,
             split_seed,
         } => {
+            check_evaluation_control(control, segment.map(|s| &s.budget))?;
             let path = input.resolve(
                 &resolve_root(weights_root, "weights"),
                 CatalogMode::Inference,
@@ -1813,11 +2008,21 @@ fn run_on_backend<R: Runtime>(
             } else {
                 &data.training
             };
-            let metrics = evaluate_source_on_device(&model, &config, set, runtime.device())?;
+            let metrics = evaluate_source_controlled_on_device(
+                &model,
+                &config,
+                set,
+                runtime.device(),
+                || check_evaluation_control(control, segment.map(|s| &s.budget)),
+            )?;
             if let Some(control) = control {
-                control.emit("evaluation",serde_json::json!({"targets":metrics.target_count,"cross_entropy":metrics.mean_cross_entropy,"perplexity":metrics.perplexity}))?;
+                let data = serde_json::json!({"targets":metrics.target_count,"cross_entropy":metrics.mean_cross_entropy,"perplexity":metrics.perplexity});
+                check_evaluation_control(Some(control), segment.map(|s| &s.budget))?;
+                control.emit("evaluation", data)?;
             }
+            check_evaluation_control(control, segment.map(|s| &s.budget))?;
             report_evaluation("Evaluation", &metrics);
+            check_evaluation_control(control, segment.map(|s| &s.budget))?;
         }
         Command::Checkpoints { command } => run_checkpoint_command(command)?,
         Command::TrainTokenizer {

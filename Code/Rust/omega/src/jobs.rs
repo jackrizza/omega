@@ -32,6 +32,8 @@ pub enum Action {
     Evaluate,
     Generate,
     Chat,
+    PostTrain,
+    PostTrainRecover,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobSpec {

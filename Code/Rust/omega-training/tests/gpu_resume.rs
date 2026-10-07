@@ -238,7 +238,7 @@ fn gpu_training_transfer_continuation_and_rejection_contracts() {
     let device = selected.device();
     let config = config();
     let tokenizer =
-        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../datasets/test.json"))
+        Tokens::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/wordlevel.json"))
             .unwrap();
     let temp = tempfile::tempdir().unwrap();
     let metadata = CheckpointMetadata::default();
